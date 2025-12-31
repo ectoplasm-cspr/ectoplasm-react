@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../contexts/WalletContext';
-import { Link } from 'react-router-dom';
 
 type OrderTab = 'swap' | 'limit' | 'buy' | 'sell';
 
@@ -214,24 +213,44 @@ export function SwapCard() {
 
         <div className="swap-actions">
           {!connected ? (
-            <Link className="btn primary full" to="/" onClick={(e) => { e.preventDefault(); connect(); }}>
-              Let's Begin
-            </Link>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => connect()}
+            >
+              Swap
+            </button>
           ) : (
             <button
               type="submit"
-              className="btn primary full"
+              className="btn primary"
               disabled={!canSwap || loading}
             >
-              {loading ? 'Swapping...' : quoting ? 'Getting quote...' : isDemo ? 'Swap (Demo)' : 'Swap'}
+              {loading ? 'Swapping...' : quoting ? 'Getting quote...' : 'Swap'}
             </button>
           )}
         </div>
-        {quote?.valid && (
-          <small className="muted" id="orderSummary">
-            1 {tokenIn} = {quote.rate} {tokenOut} | Impact: {quote.priceImpact}%
-          </small>
-        )}
+        <small className="muted" id="orderSummary" hidden></small>
+        <div className="swap-meta" aria-live="polite">
+          <div className="meta-row">
+            <span className="muted">Rate</span>
+            <strong id="rateDisplay">
+              {quote?.valid ? `1 ${tokenIn} ≈ ${quote.rate} ${tokenOut}` : '--'}
+            </strong>
+          </div>
+          <div className="meta-row">
+            <span className="muted">Route</span>
+            <strong>Auto · Casper mainnet</strong>
+          </div>
+          <div className="meta-row">
+            <span className="muted">Network fee</span>
+            <strong id="feeDisplay">~0.0030 CSPR</strong>
+          </div>
+          <div className="meta-row">
+            <span className="muted">Minimum received</span>
+            <strong id="minReceived">{quote?.minReceived || '--'}</strong>
+          </div>
+        </div>
       </form>
 
       {/* Popouts */}

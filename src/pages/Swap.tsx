@@ -1,35 +1,27 @@
+import { useEffect } from 'react';
 import { SwapCard } from '../components/swap';
 
 export function Swap() {
+  // Add swap-page class to body for page-specific styling
+  useEffect(() => {
+    document.body.classList.add('swap-page');
+    return () => {
+      document.body.classList.remove('swap-page');
+    };
+  }, []);
+
   return (
     <main>
       <section className="hero swap-hero" id="swap">
-        {/* Liquid blob animations */}
-        <div className="liquid-container">
-          <div className="liquid-blob"></div>
-          <div className="liquid-blob"></div>
-          <div className="liquid-blob"></div>
-          <div className="liquid-blob"></div>
-          <div className="liquid-blob"></div>
-        </div>
-
         <div className="container swap-layout">
           <div className="swap-heading">
-            <h1>Swapping when & wherever you want to.</h1>
+            {/* Empty heading for swap page - matches original */}
           </div>
 
           <SwapCard />
 
-          <div className="hero-copy swap-copy">
-            <p className="lead">
-              A focused swap card sits front and center. Connect your wallet, set slippage,
-              and move between CSPR and ECTO with clear routing and instant feedback.
-            </p>
-            <ul className="trust-list">
-              <li><strong id="priceTicker">CSPR $--.--</strong> live price</li>
-              <li>Casper mainnet routing</li>
-              <li>Wallet status shown inline</li>
-            </ul>
+          <div className="hero-copy swap-copy active">
+            {/* Empty copy section for swap page - matches original */}
           </div>
         </div>
       </section>
