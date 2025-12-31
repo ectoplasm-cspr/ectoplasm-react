@@ -70,14 +70,17 @@ export const EctoplasmConfig = {
   currentNetwork: 'testnet' as NetworkName,
 
   // Contract Package Hashes (deployed on testnet)
+  // Note: Use contract hash (not package hash) for calling entry points
   contracts: {
-    factory: 'hash-b42ef2718fd368fb40564b2c655550de5f5157b9d3788463ce4a7492db100816',
-    router: 'hash-344a719930ebca4c37525d5801400b24b7f007a56f3426e9a5777cd6f56faca1',
+    factory: 'hash-2d752507bdb93699bfdcccc3018e6feaa4d25b051944c38691d584fa796d9dd4',
+    router: 'hash-9c10e021bf564421da1ce9b820568a278a5736b33ca4af37361cb9595ab4ec61',
     lpToken: 'hash-16eacd913f576394fbf114f652504e960367be71b560795fb9d7cf4d5c98ea68',
     pairs: {
-      'ECTO/USDC': 'hash-7a9d232fb79ae73ad24f2f40f76ec97757df9f40c60913477b67e912a5ac7ddf',
-      'WETH/USDC': 'hash-3a580a704165ce3fc5c4216819f372a19b765b736ecd89b009fa04725ebba0bf',
-      'WBTC/USDC': 'hash-35db4ae07d69915fc04ef5441642911da75f48b05c0b55f31b59a9ae0504c8bf',
+      // Contract hashes for direct pair access
+      // Note: Use hash- prefix (CasperService normalizes to this format)
+      'ECTO/USDC': 'hash-58e93450c5188c6d9caf9ce3e9938cd04d011203290ea688db858621ed148aa3',
+      'WETH/USDC': 'hash-433c92970b5f9073222f9e50739af8092b1e96345e6eb2a33e511308495f3f7c',
+      'WBTC/USDC': 'hash-6be8a5c893aed8cfa0fbe3c36fa4d3be03e4d9d6d2cfe02e55e965f3c4e355c0',
     },
   } as ContractsConfig,
 
@@ -91,14 +94,14 @@ export const EctoplasmConfig = {
       icon: null
     },
     ECTO: {
-      hash: 'hash-fb7c662bca66d1a32018ac6529b4ee588cf13178370ae5b59f979ae6e5e96029',
+      hash: 'hash-1b0605985056c63e11765ec4b5d9d8fffaab9728f79593af559a75cb505e2e22',
       symbol: 'ECTO',
       decimals: 18,
       name: 'Ectoplasm Token',
       icon: null
     },
     USDC: {
-      hash: 'hash-85c1770e3dd4e951d37b8ea9b0047fed7fb68578eb4006477d31f019b6d4d1ca',
+      hash: 'hash-8d280a37beafdbca44b162e6c2588f8415b379731e56522fca570e4b7ff98168',
       symbol: 'USDC',
       decimals: 6,
       name: 'USD Coin',

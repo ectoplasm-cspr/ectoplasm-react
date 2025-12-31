@@ -133,10 +133,11 @@ export function Header() {
         </div>
 
         <nav className="nav" aria-label="Primary navigation">
-          <Link to="/" className={isActive('/') || isActive('/swap') ? 'active' : ''}>Swap</Link>
+          <Link to="/swap" className={isActive('/') || isActive('/swap') ? 'active' : ''}>Swap</Link>
           <Link to="/dashboard" className={isActive('/dashboard') ? 'active' : ''}>Dashboard</Link>
           <Link to="/launchpad" className={isActive('/launchpad') ? 'active' : ''}>Launch Pad</Link>
           <Link to="/liquidity" className={isActive('/liquidity') ? 'active' : ''}>Earn</Link>
+          <Link to="/faucet" className={isActive('/faucet') ? 'active' : ''}>Faucet</Link>
           <button
             className="btn ghost"
             onClick={toggleTheme}
