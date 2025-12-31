@@ -43,26 +43,31 @@ export interface ContractsConfig {
 export type NetworkName = 'testnet' | 'mainnet';
 export type TokenSymbol = 'CSPR' | 'ECTO' | 'USDC' | 'WETH' | 'WBTC';
 
+// Detect environment for RPC URL selection
+const isDev = import.meta.env?.DEV ?? false;
+
 // Configuration object
 export const EctoplasmConfig = {
   // Network Configuration
+  // Development: Uses Vite proxy to bypass CORS
+  // Production: Uses Vercel serverless function at /api/casper-rpc
   networks: {
     testnet: {
       name: 'Casper Testnet',
-      rpcUrl: 'https://node.testnet.casper.network/rpc',
+      rpcUrl: isDev ? '/api/casper-testnet/rpc' : '/api/casper-rpc?network=testnet',
       apiUrl: 'https://api.testnet.cspr.cloud',
       chainName: 'casper-test',
     },
     mainnet: {
       name: 'Casper Mainnet',
-      rpcUrl: 'https://node.mainnet.casper.network/rpc',
+      rpcUrl: isDev ? '/api/casper-mainnet/rpc' : '/api/casper-rpc?network=mainnet',
       apiUrl: 'https://api.cspr.cloud',
       chainName: 'casper',
     }
   } as Record<NetworkName, NetworkConfig>,
 
   // Current Network (toggle for deployment)
-  currentNetwork: 'mainnet' as NetworkName,
+  currentNetwork: 'testnet' as NetworkName,
 
   // Contract Package Hashes (deployed on testnet)
   contracts: {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../contexts/WalletContext';
+import { EctoplasmConfig } from '../../config/ectoplasm';
 
 type OrderTab = 'swap' | 'limit' | 'buy' | 'sell';
 
@@ -240,7 +241,7 @@ export function SwapCard() {
           </div>
           <div className="meta-row">
             <span className="muted">Route</span>
-            <strong>Auto · Casper mainnet</strong>
+            <strong>Auto · {EctoplasmConfig.getNetwork().name}</strong>
           </div>
           <div className="meta-row">
             <span className="muted">Network fee</span>
@@ -298,7 +299,7 @@ export function SwapCard() {
             <div className="swap-mini-grid settings-mini-grid" aria-label="Routing details">
               <span className="muted">Impact <strong>0.00%</strong></span>
               <span className="muted">Fee <strong>0.25%</strong></span>
-              <span className="muted">Network <strong>Casper</strong></span>
+              <span className="muted">Network <strong>{EctoplasmConfig.currentNetwork}</strong></span>
             </div>
           </div>
         </div>
@@ -323,7 +324,7 @@ export function SwapCard() {
             </div>
             <div>
               <dt>Network</dt>
-              <dd>Casper mainnet</dd>
+              <dd>{EctoplasmConfig.getNetwork().name}</dd>
             </div>
             <div>
               <dt>Price impact</dt>
@@ -346,7 +347,7 @@ export function SwapCard() {
             </button>
           </div>
           <div className="network-status">
-            <span className="status-badge subtle">Casper mainnet</span>
+            <span className="status-badge subtle">{EctoplasmConfig.getNetwork().name}</span>
             <span className="status-badge subtle">{connected ? 'Wallet connected' : 'Wallet disconnected'}</span>
             <p className="muted small">Routing auto-selects the best path and keeps gas low.</p>
           </div>

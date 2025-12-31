@@ -162,6 +162,7 @@ class CasperServiceClass {
     try {
       const network = EctoplasmConfig.getNetwork();
 
+      // Use RPC via Vite proxy to bypass CORS
       const response = await fetch(network.rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -180,10 +181,12 @@ class CasperServiceClass {
       const data = await response.json();
 
       if (data.error) {
+        // Account not found or other error
         if (data.error.code === -32003 || data.error.message?.includes('not found')) {
           return { raw: BigInt(0), formatted: '0', decimals: 9 };
         }
-        throw new Error(data.error.message || 'RPC error');
+        console.error('RPC error:', data.error);
+        return { raw: BigInt(0), formatted: '0', decimals: 9 };
       }
 
       const balanceBigInt = BigInt(data.result?.balance || '0');
