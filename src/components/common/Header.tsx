@@ -39,7 +39,7 @@ export function Header() {
             <span className="chevron" aria-hidden="true">⌄</span>
           </button>
 
-          <div className={`logo-menu-panel ${menuOpen ? '' : 'hidden'}`} id="logoMenu">
+          <div className="logo-menu-panel" id="logoMenu" hidden={!menuOpen}>
             <div className="menu-grid">
               <div className="menu-section">
                 <div className="menu-heading">Products</div>

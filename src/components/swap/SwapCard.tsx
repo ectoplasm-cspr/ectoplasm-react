@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../contexts/WalletContext';
-import { SwapInput } from './SwapInput';
-import { EctoplasmConfig } from '../../config/ectoplasm';
+import { Link } from 'react-router-dom';
+
+type OrderTab = 'swap' | 'limit' | 'buy' | 'sell';
 
 export function SwapCard() {
   const { connected, connect } = useWallet();
@@ -22,8 +23,11 @@ export function SwapCard() {
     executeSwap
   } = useSwap();
 
+  const [activeTab, setActiveTab] = useState<OrderTab>('swap');
   const [showSettings, setShowSettings] = useState(false);
-  const [slippage, setSlippage] = useState(EctoplasmConfig.swap.defaultSlippage.toString());
+  const [showDetails, setShowDetails] = useState(false);
+  const [showNetwork, setShowNetwork] = useState(false);
+  const [slippage, setSlippage] = useState('0.5');
 
   const handleSwap = async () => {
     if (!connected) {
@@ -37,128 +41,298 @@ export function SwapCard() {
     }
   };
 
+  const closeAllPopouts = () => {
+    setShowSettings(false);
+    setShowDetails(false);
+    setShowNetwork(false);
+  };
+
+  const togglePopout = (popout: 'settings' | 'details' | 'network') => {
+    closeAllPopouts();
+    if (popout === 'settings') setShowSettings(!showSettings);
+    if (popout === 'details') setShowDetails(!showDetails);
+    if (popout === 'network') setShowNetwork(!showNetwork);
+  };
+
   const canSwap = connected && quote?.valid && !loading && !quoting && parseFloat(amountIn) > 0;
   const isDemo = quote?.demo;
 
   return (
-    <div className="pump-card swap-card">
-      <div className="swap-header">
-        <h2>Swap</h2>
-        <button
-          className="btn ghost icon-btn"
-          onClick={() => setShowSettings(!showSettings)}
-          aria-label="Swap settings"
-        >
-          ⚙️
-        </button>
+    <div className="hero-card swap-shell" aria-labelledby="swap-heading-title">
+      {/* Toolbar with tabs and icons */}
+      <div className="swap-toolbar compact">
+        <div className="swap-quick-actions" aria-label="Swap controls">
+          <div className="swap-tabs" role="tablist" aria-label="Order type">
+            <button
+              type="button"
+              className={`pill ${activeTab === 'swap' ? 'active' : 'ghost'}`}
+              onClick={() => setActiveTab('swap')}
+              role="tab"
+              aria-selected={activeTab === 'swap'}
+            >
+              Swap
+            </button>
+            <button
+              type="button"
+              className={`pill ${activeTab === 'limit' ? 'active' : 'ghost'}`}
+              onClick={() => setActiveTab('limit')}
+              role="tab"
+              aria-selected={activeTab === 'limit'}
+            >
+              Limit
+            </button>
+            <button
+              type="button"
+              className={`pill ${activeTab === 'buy' ? 'active' : 'ghost'}`}
+              onClick={() => setActiveTab('buy')}
+              role="tab"
+              aria-selected={activeTab === 'buy'}
+            >
+              Buy
+            </button>
+            <button
+              type="button"
+              className={`pill ${activeTab === 'sell' ? 'active' : 'ghost'}`}
+              onClick={() => setActiveTab('sell')}
+              role="tab"
+              aria-selected={activeTab === 'sell'}
+            >
+              Sell
+            </button>
+          </div>
+          <div className="quick-icons" aria-label="Inline tools">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => togglePopout('settings')}
+              aria-haspopup="true"
+              aria-expanded={showSettings}
+            >
+              <span className="visually-hidden">Open swap settings</span>
+              <span aria-hidden="true">&#9881;&#65039;</span>
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => togglePopout('details')}
+              aria-haspopup="true"
+              aria-expanded={showDetails}
+            >
+              <span className="visually-hidden">Open trade details</span>
+              <span aria-hidden="true">&#128202;</span>
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => togglePopout('network')}
+              aria-haspopup="true"
+              aria-expanded={showNetwork}
+            >
+              <span className="visually-hidden">Open network and wallet status</span>
+              <span aria-hidden="true">&#127760;</span>
+            </button>
+          </div>
+        </div>
       </div>
 
-      {showSettings && (
-        <div className="swap-settings">
-          <label>
-            Slippage tolerance
-            <div className="slippage-options">
-              {['0.1', '0.5', '1.0'].map((val) => (
-                <button
-                  key={val}
-                  className={`btn ghost small ${slippage === val ? 'active' : ''}`}
-                  onClick={() => setSlippage(val)}
-                >
-                  {val}%
-                </button>
-              ))}
-              <input
-                type="number"
-                value={slippage}
-                onChange={(e) => setSlippage(e.target.value)}
-                min="0.1"
-                max="50"
-                step="0.1"
-                className="slippage-input"
-              />
-              <span>%</span>
+      {/* Swap Form */}
+      <form className="swap-form swap-form-compact" onSubmit={(e) => { e.preventDefault(); handleSwap(); }}>
+        <label className="token-row">
+          <div className="token-row-top">
+            <span className="muted">Sell</span>
+            <span className="balance">Balance: 0</span>
+          </div>
+          <div className="token-input">
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="0"
+              min="0"
+              step="any"
+              value={amountIn}
+              onChange={(e) => setAmountIn(e.target.value)}
+              aria-label="Sell amount"
+            />
+            <div className="token-selector">
+              <select
+                value={tokenIn}
+                onChange={(e) => setTokenIn(e.target.value)}
+                aria-label="Sell token"
+              >
+                <option value="CSPR">CSPR</option>
+                <option value="ECTO">ECTO</option>
+              </select>
             </div>
-          </label>
+          </div>
+        </label>
+
+        <div className="arrow-divider">
+          <button
+            type="button"
+            className="arrow-circle"
+            onClick={switchTokens}
+            aria-label="Reverse tokens and amounts"
+          >
+            &#8645;
+          </button>
         </div>
-      )}
 
-      <SwapInput
-        label="You pay"
-        value={amountIn}
-        onChange={setAmountIn}
-        token={tokenIn}
-        onTokenChange={setTokenIn}
-      />
+        <label className="token-row">
+          <div className="token-row-top">
+            <span className="muted">Buy</span>
+            <span className="balance">Estimated</span>
+          </div>
+          <div className="token-input">
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="0"
+              min="0"
+              step="any"
+              value={amountOut}
+              readOnly
+              aria-label="Buy amount"
+            />
+            <div className="token-selector">
+              <select
+                value={tokenOut}
+                onChange={(e) => setTokenOut(e.target.value)}
+                aria-label="Buy token"
+              >
+                <option value="ECTO">ECTO</option>
+                <option value="CSPR">CSPR</option>
+              </select>
+            </div>
+          </div>
+        </label>
 
-      <div className="swap-arrow-wrapper">
-        <button
-          className="btn ghost icon-btn swap-arrow"
-          onClick={switchTokens}
-          aria-label="Switch tokens"
-        >
-          ↓
-        </button>
+        {error && (
+          <div className="swap-error">
+            {error}
+          </div>
+        )}
+
+        <div className="swap-actions">
+          {!connected ? (
+            <Link className="btn primary full" to="/" onClick={(e) => { e.preventDefault(); connect(); }}>
+              Let's Begin
+            </Link>
+          ) : (
+            <button
+              type="submit"
+              className="btn primary full"
+              disabled={!canSwap || loading}
+            >
+              {loading ? 'Swapping...' : quoting ? 'Getting quote...' : isDemo ? 'Swap (Demo)' : 'Swap'}
+            </button>
+          )}
+        </div>
+        {quote?.valid && (
+          <small className="muted" id="orderSummary">
+            1 {tokenIn} = {quote.rate} {tokenOut} | Impact: {quote.priceImpact}%
+          </small>
+        )}
+      </form>
+
+      {/* Popouts */}
+      <div className="swap-popouts" aria-live="polite">
+        {/* Settings Popout */}
+        <div className={`popout ${showSettings ? '' : 'hidden'}`} id="settingsPopout" role="dialog" aria-label="Swap settings" hidden={!showSettings}>
+          <div className="popout-header">
+            <strong>Settings</strong>
+            <button type="button" className="icon-btn ghost" onClick={() => setShowSettings(false)}>
+              <span className="visually-hidden">Close settings</span>
+              <span aria-hidden="true">&#10005;</span>
+            </button>
+          </div>
+          <div className="settings-group">
+            <label className="muted">Slippage tolerance</label>
+            <div className="pill-row tight">
+              <button type="button" className={`pill ghost ${slippage === '0.1' ? 'active' : ''}`} onClick={() => setSlippage('0.1')}>0.1%</button>
+              <button type="button" className={`pill ghost ${slippage === '0.5' ? 'active' : ''}`} onClick={() => setSlippage('0.5')}>0.5%</button>
+              <button type="button" className={`pill ghost ${slippage === '1' ? 'active' : ''}`} onClick={() => setSlippage('1')}>1%</button>
+              <div className="input-row tight compact">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  min="0"
+                  value={slippage}
+                  onChange={(e) => setSlippage(e.target.value)}
+                  aria-label="Slippage tolerance"
+                />
+                <span className="suffix">%</span>
+              </div>
+            </div>
+          </div>
+          <div className="settings-group">
+            <span className="muted">Quick amounts</span>
+            <div className="quick-amounts" aria-label="Quick amount buttons">
+              <button type="button" className="chip" onClick={() => setAmountIn('10')}>10</button>
+              <button type="button" className="chip" onClick={() => setAmountIn('100')}>100</button>
+              <button type="button" className="chip" onClick={() => setAmountIn('250')}>250</button>
+            </div>
+          </div>
+          <div className="settings-group">
+            <span className="muted">Routing snapshot</span>
+            <div className="swap-health">Optimal routing</div>
+            <div className="swap-mini-grid settings-mini-grid" aria-label="Routing details">
+              <span className="muted">Impact <strong>0.00%</strong></span>
+              <span className="muted">Fee <strong>0.25%</strong></span>
+              <span className="muted">Network <strong>Casper</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Details Popout */}
+        <div className={`popout ${showDetails ? '' : 'hidden'}`} id="detailsPopout" role="dialog" aria-label="Trade details" hidden={!showDetails}>
+          <div className="popout-header">
+            <strong>Trade details</strong>
+            <button type="button" className="icon-btn ghost" onClick={() => setShowDetails(false)}>
+              <span className="visually-hidden">Close trade details</span>
+              <span aria-hidden="true">&#10005;</span>
+            </button>
+          </div>
+          <dl className="swap-breakdown">
+            <div>
+              <dt>Minimum received</dt>
+              <dd>Respecting slippage controls</dd>
+            </div>
+            <div>
+              <dt>Route</dt>
+              <dd>Auto (best path)</dd>
+            </div>
+            <div>
+              <dt>Network</dt>
+              <dd>Casper mainnet</dd>
+            </div>
+            <div>
+              <dt>Price impact</dt>
+              <dd><strong>{quote?.priceImpact || '0.00'}%</strong></dd>
+            </div>
+            <div>
+              <dt>Fee</dt>
+              <dd>0.25%</dd>
+            </div>
+          </dl>
+        </div>
+
+        {/* Network Popout */}
+        <div className={`popout ${showNetwork ? '' : 'hidden'}`} id="networkPopout" role="dialog" aria-label="Network and wallet" hidden={!showNetwork}>
+          <div className="popout-header">
+            <strong>Network</strong>
+            <button type="button" className="icon-btn ghost" onClick={() => setShowNetwork(false)}>
+              <span className="visually-hidden">Close network status</span>
+              <span aria-hidden="true">&#10005;</span>
+            </button>
+          </div>
+          <div className="network-status">
+            <span className="status-badge subtle">Casper mainnet</span>
+            <span className="status-badge subtle">{connected ? 'Wallet connected' : 'Wallet disconnected'}</span>
+            <p className="muted small">Routing auto-selects the best path and keeps gas low.</p>
+          </div>
+        </div>
       </div>
-
-      <SwapInput
-        label="You receive"
-        value={amountOut}
-        token={tokenOut}
-        onTokenChange={setTokenOut}
-        readOnly
-      />
-
-      {quote && quote.valid && (
-        <div className="swap-details">
-          <div className="swap-detail-row">
-            <span className="muted">Rate</span>
-            <span>1 {tokenIn} = {quote.rate} {tokenOut}</span>
-          </div>
-          <div className="swap-detail-row">
-            <span className="muted">Price Impact</span>
-            <span className={parseFloat(quote.priceImpact) > 5 ? 'text-warning' : ''}>
-              {quote.priceImpact}%
-            </span>
-          </div>
-          {quote.minReceived && (
-            <div className="swap-detail-row">
-              <span className="muted">Min received</span>
-              <span>{quote.minReceived} {tokenOut}</span>
-            </div>
-          )}
-          <div className="swap-detail-row">
-            <span className="muted">Fee</span>
-            <span>{EctoplasmConfig.swap.feePercent}%</span>
-          </div>
-          {isDemo && (
-            <div className="swap-demo-notice">
-              Demo mode - using simulated rates
-            </div>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <div className="swap-error">
-          {error}
-        </div>
-      )}
-
-      <button
-        className="btn primary full large"
-        onClick={handleSwap}
-        disabled={connected && (!canSwap || loading)}
-      >
-        {!connected
-          ? 'Connect Wallet'
-          : loading
-          ? 'Swapping...'
-          : quoting
-          ? 'Getting quote...'
-          : isDemo
-          ? 'Swap (Demo)'
-          : 'Swap'}
-      </button>
     </div>
   );
 }
