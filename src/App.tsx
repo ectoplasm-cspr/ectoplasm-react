@@ -1,29 +1,45 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, WalletProvider } from './contexts';
-import { Header, Footer } from './components/common';
-import { Home, Liquidity, Launchpad, Dashboard, Privacy } from './pages';
+import { Header, Footer, ErrorBoundary, PageLoader, ScrollToTop } from './components/common';
 import './index.css';
+
+// Lazy load pages for code splitting
+const Home = lazy(() => import('./pages/Home'));
+const Liquidity = lazy(() => import('./pages/Liquidity'));
+const Launchpad = lazy(() => import('./pages/Launchpad'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Privacy = lazy(() => import('./pages/Privacy'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 
 function App() {
   return (
-    <ThemeProvider>
-      <WalletProvider>
-        <BrowserRouter>
-          <div className="app-wrapper">
-            <Header />
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/swap" element={<Home />} />
-              <Route path="/liquidity" element={<Liquidity />} />
-              <Route path="/launchpad" element={<Launchpad />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/privacy" element={<Privacy />} />
-            </Routes>
-            <Footer />
-          </div>
-        </BrowserRouter>
-      </WalletProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <WalletProvider>
+          <BrowserRouter>
+            <ScrollToTop />
+            <div className="app-wrapper">
+              <Header />
+              <ErrorBoundary>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/swap" element={<Home />} />
+                    <Route path="/liquidity" element={<Liquidity />} />
+                    <Route path="/launchpad" element={<Launchpad />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/privacy" element={<Privacy />} />
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </Suspense>
+              </ErrorBoundary>
+              <Footer />
+            </div>
+          </BrowserRouter>
+        </WalletProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 
