@@ -1,0 +1,32 @@
+{
+  "name": "Ectoplasm DEX",
+  "short_name": "Ectoplasm",
+  "description": "Fast, secure decentralized exchange on Casper Network",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#04131a",
+  "theme_color": "#1ed8a2",
+  "icons": [
+    {
+      "src": "/assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/favicon-16x16.svg",
+      "sizes": "16x16",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/assets/favicon-32x32.svg",
+      "sizes": "32x32",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/assets/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml"
+    }
+  ]
+}

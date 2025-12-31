@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180" role="img" aria-labelledby="title desc">
+  <title id="title">Halborn logo</title>
+  <desc id="desc">Black Halborn logotype for light theme.</desc>
+  <text x="50%" y="50%" fill="#000000" font-family="'Arial Black', 'Montserrat', sans-serif" font-size="96" font-weight="900" letter-spacing="8" text-anchor="middle" dominant-baseline="middle">
+    HALBORN
+  </text>
+</svg>
