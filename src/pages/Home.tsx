@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { SwapCard } from '../components/swap';
+import { LandingSwapCard } from '../components/swap';
 
 export function Home() {
   return (
@@ -20,7 +20,7 @@ export function Home() {
             <h1>Swapping when & wherever you want to.</h1>
           </div>
 
-          <SwapCard />
+          <LandingSwapCard />
 
           <div className="hero-copy swap-copy">
             <p className="lead">

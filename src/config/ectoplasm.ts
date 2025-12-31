@@ -62,7 +62,7 @@ export const EctoplasmConfig = {
   } as Record<NetworkName, NetworkConfig>,
 
   // Current Network (toggle for deployment)
-  currentNetwork: 'testnet' as NetworkName,
+  currentNetwork: 'mainnet' as NetworkName,
 
   // Contract Package Hashes (deployed on testnet)
   contracts: {

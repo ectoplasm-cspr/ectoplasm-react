@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 type OrderTab = 'swap' | 'limit' | 'buy' | 'sell';
 
 export function SwapCard() {
-  const { connected, connect } = useWallet();
+  const { connected, connect, balances } = useWallet();
   const {
     tokenIn,
     tokenOut,
@@ -140,7 +140,7 @@ export function SwapCard() {
         <label className="token-row">
           <div className="token-row-top">
             <span className="muted">Sell</span>
-            <span className="balance">Balance: 0</span>
+            <span className="balance">Balance: {balances[tokenIn]?.formatted || '0'}</span>
           </div>
           <div className="token-input">
             <input

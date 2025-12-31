@@ -6,6 +6,7 @@ import './index.css';
 
 // Lazy load pages for code splitting
 const Home = lazy(() => import('./pages/Home'));
+const Swap = lazy(() => import('./pages/Swap'));
 const Liquidity = lazy(() => import('./pages/Liquidity'));
 const Launchpad = lazy(() => import('./pages/Launchpad'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -25,7 +26,7 @@ function App() {
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
                     <Route path="/" element={<Home />} />
-                    <Route path="/swap" element={<Home />} />
+                    <Route path="/swap" element={<Swap />} />
                     <Route path="/liquidity" element={<Liquidity />} />
                     <Route path="/launchpad" element={<Launchpad />} />
                     <Route path="/dashboard" element={<Dashboard />} />
