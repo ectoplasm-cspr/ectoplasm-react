@@ -101,11 +101,15 @@ class CasperServiceClass {
   async getTokenBalance(tokenHash: string, publicKeyHex: string): Promise<BalanceResult> {
     this.ensureInit();
 
+    console.log('[getTokenBalance] Called with:', { tokenHash, publicKeyHex });
+
     if (!tokenHash) {
+      console.log('[getTokenBalance] No tokenHash provided, returning 0');
       return { raw: BigInt(0), formatted: '0', decimals: 18 };
     }
 
     const tokenConfig = EctoplasmConfig.getTokenByHash(tokenHash);
+    console.log('[getTokenBalance] Token config:', tokenConfig);
     const decimals = tokenConfig?.decimals || 18;
 
     try {
@@ -113,10 +117,13 @@ class CasperServiceClass {
       const accountHash = publicKey.toAccountHashStr();
       const contractHash = tokenHash.replace('hash-', '');
 
+      console.log('[getTokenBalance] Derived values:', { accountHash, contractHash });
+
       // Try standard CEP-18 dictionary query with base64 key format
       // CEP-18 uses base64(Key bytes) for dictionary keys
       try {
         const balance = await this.queryCep18Balance(contractHash, accountHash);
+        console.log('[getTokenBalance] Query result:', balance.toString());
         if (balance > BigInt(0)) {
           return {
             raw: balance,
@@ -125,7 +132,7 @@ class CasperServiceClass {
           };
         }
       } catch (e) {
-        console.debug('[CEP-18] Standard query failed:', e);
+        console.log('[getTokenBalance] CEP-18 query failed:', e);
       }
 
       // Note: Odra CEP-18 tokens use a different storage pattern
@@ -134,7 +141,7 @@ class CasperServiceClass {
 
       return { raw: BigInt(0), formatted: '0', decimals };
     } catch (error: any) {
-      console.error('Token balance error:', error);
+      console.error('[getTokenBalance] Error:', error);
       return { raw: BigInt(0), formatted: '0', decimals };
     }
   }
@@ -147,6 +154,13 @@ class CasperServiceClass {
     const network = EctoplasmConfig.getNetwork();
     const accountHashHex = accountHash.replace('account-hash-', '');
 
+    console.log('[CEP-18] Querying balance:', {
+      contractHash,
+      accountHash,
+      accountHashHex,
+      rpcUrl: network.rpcUrl
+    });
+
     // Get state root hash first
     const stateRootResponse = await fetch(network.rpcUrl, {
       method: 'POST',
@@ -158,6 +172,7 @@ class CasperServiceClass {
       })
     });
     const stateRootData = await stateRootResponse.json();
+    console.log('[CEP-18] State root response:', stateRootData);
     const stateRootHash = stateRootData?.result?.state_root_hash;
 
     if (!stateRootHash) {
@@ -166,12 +181,14 @@ class CasperServiceClass {
 
     // Try V2 format first: hex-encoded account hash (Casper 2.0 native contracts)
     try {
+      console.log('[CEP-18] Trying V2 hex format with key:', accountHashHex);
       const v2Balance = await this.queryBalanceWithKey(contractHash, accountHashHex, stateRootHash);
+      console.log('[CEP-18] V2 balance result:', v2Balance.toString());
       if (v2Balance > BigInt(0)) {
         return v2Balance;
       }
     } catch (e) {
-      console.debug('[CEP-18] V2 hex format query failed, trying V1 format');
+      console.log('[CEP-18] V2 hex format query failed:', e);
     }
 
     // Fallback to V1 format: base64 encoded Key bytes (standard CEP-18)
@@ -181,19 +198,25 @@ class CasperServiceClass {
     keyBytes.set(hashBytes, 1);
     const base64Key = btoa(String.fromCharCode(...keyBytes));
 
+    console.log('[CEP-18] Trying V1 base64 format with key:', base64Key);
     return await this.queryBalanceWithKey(contractHash, base64Key, stateRootHash);
   }
 
   /**
    * Query balance dictionary with a specific key format
+   * Tries both Casper 2.0 (entity-contract-) and legacy (hash-) prefixes
    */
   private async queryBalanceWithKey(contractHash: string, dictKey: string, stateRootHash: string): Promise<bigint> {
     const network = EctoplasmConfig.getNetwork();
 
-    const response = await fetch(network.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    // Ensure contractHash doesn't have any prefix
+    const cleanContractHash = contractHash.replace(/^(hash-|entity-contract-)/, '');
+
+    // Try Casper 2.0 entity-contract prefix first (for native contracts)
+    const prefixes = ['entity-contract-', 'hash-'];
+
+    for (const prefix of prefixes) {
+      const requestBody = {
         jsonrpc: '2.0',
         id: 2,
         method: 'state_get_dictionary_item',
@@ -201,24 +224,41 @@ class CasperServiceClass {
           state_root_hash: stateRootHash,
           dictionary_identifier: {
             ContractNamedKey: {
-              key: `hash-${contractHash}`,
+              key: `${prefix}${cleanContractHash}`,
               dictionary_name: 'balances',
               dictionary_item_key: dictKey
             }
           }
         }
-      })
-    });
+      };
 
-    const data = await response.json();
+      console.log(`[CEP-18] Dictionary query (${prefix}) request:`, JSON.stringify(requestBody, null, 2));
 
-    if (data.error) {
-      throw new Error(data.error.message || 'Query failed');
-    }
+      try {
+        const response = await fetch(network.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
 
-    const clValue = data.result?.stored_value?.CLValue;
-    if (clValue?.parsed !== undefined && clValue?.parsed !== null) {
-      return BigInt(clValue.parsed.toString());
+        const data = await response.json();
+        console.log(`[CEP-18] Dictionary query (${prefix}) response:`, JSON.stringify(data, null, 2));
+
+        if (data.error) {
+          console.log(`[CEP-18] ${prefix} prefix failed:`, data.error.message);
+          continue; // Try next prefix
+        }
+
+        const clValue = data.result?.stored_value?.CLValue;
+        if (clValue?.parsed !== undefined && clValue?.parsed !== null) {
+          const balance = BigInt(clValue.parsed.toString());
+          console.log('[CEP-18] Parsed balance:', balance.toString());
+          return balance;
+        }
+      } catch (e) {
+        console.log(`[CEP-18] ${prefix} prefix error:`, e);
+        continue; // Try next prefix
+      }
     }
 
     return BigInt(0);
@@ -320,11 +360,17 @@ class CasperServiceClass {
   }
 
   async getAllBalances(publicKeyHex: string): Promise<Record<string, BalanceResult>> {
+    console.log('[getAllBalances] START - publicKeyHex:', publicKeyHex);
+    console.log('[getAllBalances] Contract version:', EctoplasmConfig.contractVersion);
+    console.log('[getAllBalances] Has CSPR.cloud API key:', EctoplasmConfig.hasCsprCloudApiKey());
+
     const balances: Record<string, BalanceResult> = {};
     const tokens = EctoplasmConfig.tokens;
+    console.log('[getAllBalances] Tokens to query:', Object.keys(tokens));
 
     // Get native CSPR balance
     balances.CSPR = await this.getNativeBalance(publicKeyHex);
+    console.log('[getAllBalances] CSPR balance:', balances.CSPR.formatted);
 
     // Initialize all CEP-18 token balances to 0
     Object.entries(tokens)
@@ -333,8 +379,10 @@ class CasperServiceClass {
         balances[symbol] = { raw: BigInt(0), formatted: '0', decimals: config.decimals };
       });
 
-    // Try CSPR.cloud API first (best for Odra contracts)
-    if (EctoplasmConfig.hasCsprCloudApiKey()) {
+    // Try CSPR.cloud API first (only for Odra contracts - native contracts aren't indexed)
+    const useCSPRCloud = EctoplasmConfig.hasCsprCloudApiKey() && EctoplasmConfig.contractVersion === 'odra';
+    if (useCSPRCloud) {
+      console.log('[getAllBalances] Using CSPR.cloud API path (Odra contracts)');
       try {
         const publicKey = CLPublicKey.fromHex(publicKeyHex);
         const accountHash = publicKey.toAccountHashStr();
@@ -363,7 +411,9 @@ class CasperServiceClass {
     }
 
     // Fallback: Try direct RPC queries for standard CEP-18 contracts
+    console.log('[getAllBalances] Using direct RPC queries (not CSPR.cloud)');
     if (this.isAvailable()) {
+      console.log('[getAllBalances] CasperService is available, querying tokens...');
       const tokenPromises = Object.entries(tokens)
         .filter(([_, config]) => config.hash)
         .map(async ([symbol, config]) => {
@@ -378,8 +428,10 @@ class CasperServiceClass {
       const results = await Promise.all(tokenPromises);
       results.forEach(([symbol, balance]) => {
         balances[symbol] = balance;
+        console.log(`[getAllBalances] ${symbol} balance:`, balance.formatted);
       });
     } else {
+      console.log('[getAllBalances] CasperService not available, returning zeros');
       Object.entries(tokens)
         .filter(([_, config]) => config.hash)
         .forEach(([symbol, config]) => {
@@ -387,6 +439,9 @@ class CasperServiceClass {
         });
     }
 
+    console.log('[getAllBalances] DONE - Final balances:', Object.fromEntries(
+      Object.entries(balances).map(([k, v]) => [k, v.formatted])
+    ));
     return balances;
   }
 

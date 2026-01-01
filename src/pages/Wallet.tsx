@@ -104,11 +104,8 @@ export function Wallet() {
           {/* Note about token balances */}
           <div className="wallet-note" style={{ marginTop: '24px', padding: '16px', background: 'var(--bg-highlight)', borderRadius: '8px' }}>
             <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>
-              Token balances are fetched via CSPR.cloud API.
+              Token balances are fetched directly from the blockchain.
               If balances show 0, your account may not have received tokens yet.
-              Check{' '}
-              <a href="https://testnet.cspr.live" target="_blank" rel="noopener noreferrer">cspr.live</a>
-              {' '}to verify your token holdings.
             </p>
           </div>
 
