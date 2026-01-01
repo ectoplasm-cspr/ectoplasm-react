@@ -482,17 +482,17 @@ class CasperServiceClass {
     reserveB: bigint;
     exists: boolean;
   }> {
-    this.ensureInit();
-
     try {
       const pairAddress = await this.getPairAddress(tokenAHash, tokenBHash);
+      console.log('[getPairReserves] Pair address:', pairAddress);
+
       if (!pairAddress) {
         return { reserveA: BigInt(0), reserveB: BigInt(0), exists: false };
       }
 
-      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
-      const reserve0 = await this.queryContractNamedKey(pairAddress, 'reserve0', stateRootHash);
-      const reserve1 = await this.queryContractNamedKey(pairAddress, 'reserve1', stateRootHash);
+      const reserve0 = await this.queryContractNamedKey(pairAddress, 'reserve0');
+      const reserve1 = await this.queryContractNamedKey(pairAddress, 'reserve1');
+      console.log('[getPairReserves] Reserves:', { reserve0, reserve1 });
 
       const [token0] = this.sortTokens(tokenAHash, tokenBHash);
 
@@ -515,21 +515,74 @@ class CasperServiceClass {
     }
   }
 
+  /**
+   * Query a contract's named key value using direct RPC
+   * Works with both V2 native (entity-contract-) and legacy (hash-) contracts
+   */
   private async queryContractNamedKey(
     contractHash: string,
     keyName: string,
     stateRootHash?: string
   ): Promise<string | null> {
-    try {
-      const result = await this.client!.nodeClient.getBlockState(
-        stateRootHash || await this.client!.nodeClient.getStateRootHash(),
-        `hash-${contractHash.replace('hash-', '')}`,
-        [keyName]
-      );
-      return result?.CLValue?.data?.toString();
-    } catch (error) {
-      return null;
+    const network = EctoplasmConfig.getNetwork();
+    const cleanHash = contractHash.replace(/^(hash-|entity-contract-)/, '');
+
+    // Get state root hash if not provided
+    if (!stateRootHash) {
+      try {
+        const response = await fetch(network.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'chain_get_state_root_hash'
+          })
+        });
+        const data = await response.json();
+        stateRootHash = data?.result?.state_root_hash;
+      } catch (e) {
+        console.error('Failed to get state root hash:', e);
+        return null;
+      }
     }
+
+    // Try both entity-contract- and hash- prefixes
+    const prefixes = ['entity-contract-', 'hash-'];
+
+    for (const prefix of prefixes) {
+      try {
+        const response = await fetch(network.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'query_global_state',
+            params: {
+              state_identifier: { StateRootHash: stateRootHash },
+              key: `${prefix}${cleanHash}`,
+              path: [keyName]
+            }
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          continue; // Try next prefix
+        }
+
+        const clValue = data.result?.stored_value?.CLValue;
+        if (clValue?.parsed !== undefined && clValue?.parsed !== null) {
+          return clValue.parsed.toString();
+        }
+      } catch (e) {
+        continue; // Try next prefix
+      }
+    }
+
+    return null;
   }
 
   private sortTokens(tokenA: string, tokenB: string): [string, string] {
@@ -934,51 +987,104 @@ class CasperServiceClass {
 
   /**
    * Get LP token balance for a user in a specific pair
+   * Uses direct RPC to query the lp_balances dictionary
    */
   async getLPTokenBalance(pairHash: string, publicKeyHex: string): Promise<BalanceResult> {
-    this.ensureInit();
+    const network = EctoplasmConfig.getNetwork();
 
     try {
       const publicKey = CLPublicKey.fromHex(publicKeyHex);
       const accountHash = publicKey.toAccountHashStr();
-      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
-      const balanceKey = accountHash.replace('account-hash-', '');
-      const contractHash = pairHash.replace('hash-', '');
+      const accountHashHex = accountHash.replace('account-hash-', '');
+      const cleanHash = pairHash.replace(/^(hash-|entity-contract-)/, '');
 
-      // LP tokens are stored in the pair's balances dictionary
-      const result = await this.client!.nodeClient.getDictionaryItemByName(
-        stateRootHash,
-        contractHash,
-        'balances',
-        balanceKey
-      );
+      // Get state root hash
+      const stateRootResponse = await fetch(network.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'chain_get_state_root_hash'
+        })
+      });
+      const stateRootData = await stateRootResponse.json();
+      const stateRootHash = stateRootData?.result?.state_root_hash;
 
-      const balance = BigInt(result.CLValue?.data?.toString() || '0');
-
-      return {
-        raw: balance,
-        formatted: formatTokenAmount(balance.toString(), 18), // LP tokens have 18 decimals
-        decimals: 18
-      };
-    } catch (error: any) {
-      if (error.message?.includes('ValueNotFound') ||
-          error.message?.includes('Failed to find') ||
-          error.code === -32003) {
+      if (!stateRootHash) {
         return { raw: BigInt(0), formatted: '0', decimals: 18 };
       }
-      throw error;
+
+      // Try both entity-contract- and hash- prefixes for LP token balance
+      // LP balances dictionary is 'lp_balances' in V2 native pair contracts
+      const prefixes = ['entity-contract-', 'hash-'];
+      const dictNames = ['lp_balances', 'balances']; // V2 uses lp_balances, legacy might use balances
+
+      for (const prefix of prefixes) {
+        for (const dictName of dictNames) {
+          try {
+            const response = await fetch(network.rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'state_get_dictionary_item',
+                params: {
+                  state_root_hash: stateRootHash,
+                  dictionary_identifier: {
+                    ContractNamedKey: {
+                      key: `${prefix}${cleanHash}`,
+                      dictionary_name: dictName,
+                      dictionary_item_key: accountHashHex
+                    }
+                  }
+                }
+              })
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+              continue; // Try next combination
+            }
+
+            const clValue = data.result?.stored_value?.CLValue;
+            if (clValue?.parsed !== undefined && clValue?.parsed !== null) {
+              const balance = BigInt(clValue.parsed.toString());
+              return {
+                raw: balance,
+                formatted: formatTokenAmount(balance.toString(), 18),
+                decimals: 18
+              };
+            }
+          } catch (e) {
+            continue; // Try next combination
+          }
+        }
+      }
+
+      return { raw: BigInt(0), formatted: '0', decimals: 18 };
+    } catch (error: any) {
+      console.error('Error fetching LP balance:', error);
+      return { raw: BigInt(0), formatted: '0', decimals: 18 };
     }
   }
 
   /**
    * Get total supply of LP tokens for a pair
+   * V2 native contracts use 'lp_total_supply', legacy might use 'total_supply'
    */
   async getLPTokenTotalSupply(pairHash: string): Promise<bigint> {
-    this.ensureInit();
-
     try {
-      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
-      const totalSupply = await this.queryContractNamedKey(pairHash, 'total_supply', stateRootHash);
+      // Try V2 native key name first
+      let totalSupply = await this.queryContractNamedKey(pairHash, 'lp_total_supply');
+      if (totalSupply) {
+        return BigInt(totalSupply);
+      }
+
+      // Fallback to legacy key name
+      totalSupply = await this.queryContractNamedKey(pairHash, 'total_supply');
       return BigInt(totalSupply || '0');
     } catch (error) {
       console.error('Error fetching LP total supply:', error);
