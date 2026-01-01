@@ -96,7 +96,7 @@ type ModalType = 'add' | 'view' | null;
 
 export function Liquidity() {
   const { connected } = useWallet();
-  const { positions } = useLiquidity();
+  const { positions, loading: liquidityLoading } = useLiquidity();
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'apr' | 'tvl' | 'stake'>('apr');
   const [autoCompound, setAutoCompound] = useState(true);
@@ -150,6 +150,10 @@ export function Liquidity() {
   };
 
   const closeModal = () => {
+    // Prevent closing during active transaction
+    if (liquidityLoading) {
+      return;
+    }
     setModalType(null);
     setSelectedPool(null);
   };
@@ -450,7 +454,14 @@ export function Liquidity() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Add Liquidity - {selectedPool.name}</h3>
-              <button className="btn ghost tiny" onClick={closeModal}>✕</button>
+              <button
+                className="btn ghost tiny"
+                onClick={closeModal}
+                disabled={liquidityLoading}
+                title={liquidityLoading ? 'Transaction in progress' : 'Close'}
+              >
+                ✕
+              </button>
             </div>
             <AddLiquidityForm
               defaultTokenA={selectedPool.tokenA}

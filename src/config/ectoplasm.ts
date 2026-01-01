@@ -247,7 +247,9 @@ export const EctoplasmConfig = {
   // Helper to find token by symbol
   getToken(symbol: string): TokenConfig | null {
     const key = symbol?.toUpperCase() as TokenSymbol;
-    return this.tokens[key] || null;
+    const token = this.tokens[key] || null;
+    console.log('[EctoplasmConfig.getToken] symbol:', symbol, 'hash:', token?.hash);
+    return token;
   },
 
   // Helper to find token by hash
@@ -277,13 +279,21 @@ export const EctoplasmConfig = {
 
   // Get configured pair address
   getConfiguredPairAddress(tokenA: string, tokenB: string): string | null {
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenA:', tokenA, 'tokenB:', tokenB);
     const tokenAConfig = this.getTokenByHash(tokenA);
     const tokenBConfig = this.getTokenByHash(tokenB);
-    if (!tokenAConfig || !tokenBConfig) return null;
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenAConfig:', tokenAConfig?.symbol, 'tokenBConfig:', tokenBConfig?.symbol);
+
+    if (!tokenAConfig || !tokenBConfig) {
+      console.log('[EctoplasmConfig.getConfiguredPairAddress] Token config not found, returning null');
+      return null;
+    }
 
     const key1 = `${tokenAConfig.symbol}/${tokenBConfig.symbol}`;
     const key2 = `${tokenBConfig.symbol}/${tokenAConfig.symbol}`;
-    return this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
+    const pairAddress = this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] key1:', key1, 'key2:', key2, 'pairAddress:', pairAddress);
+    return pairAddress;
   }
 };
 
