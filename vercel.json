@@ -1,6 +1,7 @@
 {
   "rewrites": [
-    { "source": "/api/casper-rpc", "destination": "/api/casper-rpc" },
+    { "source": "/_casper/testnet", "destination": "/api/casper-testnet" },
+    { "source": "/_casper/mainnet", "destination": "/api/casper-mainnet" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
