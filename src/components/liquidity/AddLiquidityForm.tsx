@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useLiquidity } from '../../hooks/useLiquidity';
 import { useWallet } from '../../contexts/WalletContext';
 import { EctoplasmConfig } from '../../config/ectoplasm';
 
-export function AddLiquidityForm() {
+interface AddLiquidityFormProps {
+  defaultTokenA?: string;
+  defaultTokenB?: string;
+}
+
+export function AddLiquidityForm({ defaultTokenA, defaultTokenB }: AddLiquidityFormProps) {
   const { connected, connect, balances } = useWallet();
   const {
     tokenA,
@@ -25,6 +30,17 @@ export function AddLiquidityForm() {
     txStep,
     error,
   } = useLiquidity();
+
+  // Set default tokens if provided
+  useEffect(() => {
+    if (defaultTokenA && defaultTokenA !== 'CSPR') {
+      setTokenA(defaultTokenA);
+    }
+    if (defaultTokenB && defaultTokenB !== 'CSPR') {
+      setTokenB(defaultTokenB);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultTokenA, defaultTokenB]);
 
   const tokenSymbols = EctoplasmConfig.getTokenSymbols().filter(s => s !== 'CSPR');
   const balanceA = balances[tokenA]?.formatted || '0';

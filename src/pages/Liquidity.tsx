@@ -1,25 +1,121 @@
 import React, { useState } from 'react';
 import { AddLiquidityForm, PoolCard, PositionsList } from '../components/liquidity';
-import { useLiquidity, DEMO_POOLS } from '../hooks';
+import { useLiquidity } from '../hooks';
+import { useWallet } from '../contexts/WalletContext';
 
-type TabType = 'add' | 'positions';
+// Demo staking pools data
+const STAKING_POOLS = [
+  {
+    name: 'CSPR Liquid Staking',
+    subtitle: 'Auto-compound · No lock',
+    token: 'stCSPR',
+    tokenA: 'CSPR',
+    tokenB: 'USDC',
+    tvl: 125800000,
+    apr: 16.8,
+    minStake: '100 CSPR',
+    avatarType: 'primary' as const,
+    avatarChar: '◈',
+  },
+  {
+    name: 'ECTO Liquid Staking',
+    subtitle: 'Boosted rewards · Flexible',
+    token: 'stECTO',
+    tokenA: 'ECTO',
+    tokenB: 'USDC',
+    tvl: 78400000,
+    apr: 22.4,
+    minStake: '50 ECTO',
+    avatarType: 'alt' as const,
+    avatarChar: 'E',
+  },
+  {
+    name: 'ETH Liquid Staking',
+    subtitle: 'Cross-chain · High yield',
+    token: 'stETH',
+    tokenA: 'WETH',
+    tokenB: 'USDC',
+    tvl: 92100000,
+    apr: 18.9,
+    minStake: '0.1 ETH',
+    avatarType: 'blue' as const,
+    avatarChar: 'Ξ',
+  },
+  {
+    name: 'BTC Liquid Staking',
+    subtitle: 'Bitcoin rewards · Secure',
+    token: 'stBTC',
+    tokenA: 'WBTC',
+    tokenB: 'USDC',
+    tvl: 156300000,
+    apr: 12.4,
+    minStake: '0.01 BTC',
+    avatarType: 'gold' as const,
+    avatarChar: 'B',
+  },
+  {
+    name: 'Stablecoin Yield Pool',
+    subtitle: 'Low risk · Stable returns',
+    token: 'ystUSD',
+    tokenA: 'USDC',
+    tokenB: 'USDC',
+    tvl: 64700000,
+    apr: 8.2,
+    minStake: '100 USD',
+    avatarType: 'violet' as const,
+    avatarChar: '$',
+  },
+];
+
+// Demo user positions
+const DEMO_POSITIONS = [
+  {
+    name: 'CSPR Liquid Staking',
+    staked: '25,000 CSPR',
+    apr: '16.8%',
+    earned: '$3,920.40',
+    lstToken: '25,125 stCSPR',
+  },
+  {
+    name: 'ECTO Liquid Staking',
+    staked: '15,000 ECTO',
+    apr: '22.4%',
+    earned: '$2,688.00',
+    lstToken: '15,336 stECTO',
+  },
+  {
+    name: 'ETH Liquid Staking',
+    staked: '8.5 ETH',
+    apr: '18.9%',
+    earned: '$1,606.50',
+    lstToken: '8.661 stETH',
+  },
+];
+
+type ModalType = 'add' | 'remove' | null;
 
 export function Liquidity() {
-  const [activeTab, setActiveTab] = useState<TabType>('add');
+  const { connected } = useWallet();
+  const { positions } = useLiquidity();
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'apr' | 'tvl' | 'stake'>('apr');
-  const { positions } = useLiquidity();
+  const [autoCompound, setAutoCompound] = useState(true);
+  const [highApr, setHighApr] = useState(false);
+  const [modalType, setModalType] = useState<ModalType>(null);
+  const [selectedPool, setSelectedPool] = useState<typeof STAKING_POOLS[0] | null>(null);
 
-  // Filter pools by search
-  const filteredPools = DEMO_POOLS.filter((pool) => {
+  // Filter pools
+  const filteredPools = STAKING_POOLS.filter((pool) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
       pool.name.toLowerCase().includes(query) ||
-      pool.tokenA.toLowerCase().includes(query) ||
-      pool.tokenB.toLowerCase().includes(query) ||
-      pool.lstToken.toLowerCase().includes(query)
+      pool.token.toLowerCase().includes(query) ||
+      pool.tokenA.toLowerCase().includes(query)
     );
+  }).filter((pool) => {
+    if (highApr && pool.apr < 15) return false;
+    return true;
   });
 
   // Sort pools
@@ -30,89 +126,172 @@ export function Liquidity() {
       case 'tvl':
         return b.tvl - a.tvl;
       case 'stake':
-        return a.minStake - b.minStake;
+        return 0;
       default:
         return 0;
     }
   });
 
+  const formatTVL = (tvl: number) => {
+    if (tvl >= 1000000) {
+      return `$${(tvl / 1000000).toFixed(1)}M`;
+    }
+    return `$${(tvl / 1000).toFixed(0)}K`;
+  };
+
+  const openAddLiquidity = (pool: typeof STAKING_POOLS[0]) => {
+    setSelectedPool(pool);
+    setModalType('add');
+  };
+
+  const closeModal = () => {
+    setModalType(null);
+    setSelectedPool(null);
+  };
+
+  // Use real positions if connected, otherwise show demo
+  const displayPositions = connected && positions.length > 0 ? positions : null;
+
   return (
     <main>
       {/* Hero Section */}
-      <section className="hero liquidity-hero">
+      <section className="page-hero liquidity-hero">
         <div className="container">
-          <div className="hero-grid">
+          <div className="hero-grid hero-balanced">
+            {/* Left: Copy */}
             <div className="hero-copy">
               <p className="eyebrow">Earn · Liquid Staking</p>
               <h1>Earn rewards through liquid staking pools</h1>
               <p className="lead">
                 Stake your assets to earn rewards while providing liquidity for our swaps.
                 Receive liquid staking tokens (LSTs) that represent your staked position
-                and can be traded or used across DeFi.
+                and can be traded or used across DeFi. Your staked assets power our DEX
+                liquidity, enabling seamless swaps while you earn auto-compounding rewards.
               </p>
-              <div className="hero-chips">
-                <span className="chip active">Powers DEX liquidity</span>
-                <span className="chip">Auto-compounding</span>
-                <span className="chip">LST tokens</span>
+              <div className="hero-actions">
+                <div className="hero-buttons">
+                  <a href="#pools" className="btn primary large">View Pools</a>
+                  <a href="/swap" className="btn ghost large">Learn more</a>
+                </div>
+                <div className="hero-chips">
+                  <span className="chip active">Powers DEX liquidity</span>
+                  <span className="chip">Auto-compounding</span>
+                  <span className="chip">LST tokens</span>
+                </div>
               </div>
             </div>
 
-            {/* Add Liquidity Card */}
-            <div className="hero-card pump-card">
-              <div className="lp-tabs">
-                <button
-                  className={`pill ${activeTab === 'add' ? 'filled' : ''}`}
-                  onClick={() => setActiveTab('add')}
-                >
-                  Add Liquidity
-                </button>
-                <button
-                  className={`pill ${activeTab === 'positions' ? 'filled' : ''}`}
-                  onClick={() => setActiveTab('positions')}
-                >
-                  Your Positions
-                </button>
+            {/* Right: Positions Card */}
+            <div className="hero-card panel">
+              <div className="panel-header">
+                <span className="panel-title">Your Liquid Staking Positions</span>
               </div>
-
-              {activeTab === 'add' ? (
-                <AddLiquidityForm />
-              ) : (
-                <PositionsList positions={positions} />
-              )}
+              <div className="panel-body">
+                {displayPositions ? (
+                  // Real positions from blockchain
+                  displayPositions.map((pos, idx) => (
+                    <div key={idx} className="position-item">
+                      <div className="position-header">
+                        <strong>{pos.pairName}</strong>
+                        <span className="pill subtle">Auto-compound</span>
+                      </div>
+                      <div className="position-grid">
+                        <div>
+                          <span className="muted tiny">Staked</span>
+                          <div>{pos.tokenAAmount} {pos.tokenA}</div>
+                        </div>
+                        <div>
+                          <span className="muted tiny">APR</span>
+                          <div className="apr-value">--</div>
+                        </div>
+                        <div>
+                          <span className="muted tiny">Earned</span>
+                          <div>--</div>
+                        </div>
+                      </div>
+                      <div className="position-footer">
+                        <span className="muted tiny">LP tokens: {pos.lpBalance}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // Demo positions when not connected
+                  DEMO_POSITIONS.map((pos, idx) => (
+                    <div key={idx} className="position-item">
+                      <div className="position-header">
+                        <strong>{pos.name}</strong>
+                        <span className="pill subtle">Auto-compound</span>
+                      </div>
+                      <div className="position-grid">
+                        <div>
+                          <span className="muted tiny">Staked</span>
+                          <div>{pos.staked}</div>
+                        </div>
+                        <div>
+                          <span className="muted tiny">APR</span>
+                          <div className="apr-value">{pos.apr}</div>
+                        </div>
+                        <div>
+                          <span className="muted tiny">Earned</span>
+                          <div>{pos.earned}</div>
+                        </div>
+                      </div>
+                      <div className="position-footer">
+                        <span className="muted tiny">Liquid token: {pos.lstToken}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Pool Controls */}
-      <section className="section alt">
+      {/* Controls Section */}
+      <section className="liquidity-controls section alt">
         <div className="container">
-          <div className="pool-controls">
-            <div className="pill-row">
-              <button className="pill filled">Liquid Staking Pools</button>
-            </div>
-            <div className="toolbar">
-              <div className="toolbar-field">
-                <label className="muted" htmlFor="poolSearch">Search</label>
+          <div className="controls-row">
+            <button className="pill filled">Liquid Staking Pools</button>
+            <div className="toolbar-field">
+              <label className="muted" htmlFor="poolSearch">Search</label>
+              <div className="input shell">
                 <input
                   id="poolSearch"
                   type="search"
-                  placeholder="Search pools or tokens"
+                  placeholder="Search staking pools or tokens"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="search-input"
                 />
+                <span className="suffix muted">⌘K</span>
               </div>
-              <div className="toolbar-filters">
+            </div>
+            <div className="toolbar-filters">
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={autoCompound}
+                  onChange={(e) => setAutoCompound(e.target.checked)}
+                />
+                <span>Auto-compound</span>
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={highApr}
+                  onChange={(e) => setHighApr(e.target.checked)}
+                />
+                <span>High APR</span>
+              </label>
+              <div className="select">
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as 'apr' | 'tvl' | 'stake')}
-                  className="sort-select"
                   aria-label="Sort pools"
                 >
                   <option value="apr">Sort by APR</option>
                   <option value="tvl">Sort by TVL</option>
-                  <option value="stake">Sort by Min. Stake</option>
+                  <option value="stake">Sort by Min. stake</option>
                 </select>
               </div>
             </div>
@@ -152,17 +331,33 @@ export function Liquidity() {
             </div>
 
             {sortedPools.map((pool, index) => (
-              <PoolCard
-                key={index}
-                name={pool.name}
-                tokenA={pool.tokenA}
-                tokenB={pool.tokenB}
-                tvl={pool.tvl}
-                apr={pool.apr}
-                minStake={pool.minStake}
-                lstToken={pool.lstToken}
-                features={pool.features}
-              />
+              <div key={index} className="pool-row" role="row">
+                <div className="col pair" role="cell">
+                  <div className="pair-label">
+                    <div className={`avatar ${pool.avatarType}`}>{pool.avatarChar}</div>
+                    <div>
+                      <strong>{pool.name}</strong>
+                      <div className="muted tiny">{pool.subtitle}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="col fee" role="cell">
+                  <span className="pill subtle">{pool.token}</span>
+                </div>
+                <div className="col tvl" role="cell">{formatTVL(pool.tvl)}</div>
+                <div className="col vol" role="cell">{pool.minStake}</div>
+                <div className="col apr" role="cell">
+                  <div className="apr">{pool.apr}%</div>
+                </div>
+                <div className="col action" role="cell">
+                  <button
+                    className="btn primary small"
+                    onClick={() => openAddLiquidity(pool)}
+                  >
+                    View Pool
+                  </button>
+                </div>
+              </div>
             ))}
 
             {sortedPools.length === 0 && (
@@ -173,6 +368,22 @@ export function Liquidity() {
           </div>
         </div>
       </section>
+
+      {/* Add Liquidity Modal */}
+      {modalType === 'add' && selectedPool && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Add Liquidity - {selectedPool.name}</h3>
+              <button className="btn ghost tiny" onClick={closeModal}>✕</button>
+            </div>
+            <AddLiquidityForm
+              defaultTokenA={selectedPool.tokenA}
+              defaultTokenB={selectedPool.tokenB}
+            />
+          </div>
+        </div>
+      )}
     </main>
   );
 }
