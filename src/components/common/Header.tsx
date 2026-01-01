@@ -2,12 +2,21 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ConnectWallet } from './ConnectWallet';
+import { EctoplasmConfig } from '../../config/ectoplasm';
 
 export function Header() {
   const location = useLocation();
   const { isDark, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contractVersion, setContractVersion] = useState(EctoplasmConfig.contractVersion);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleVersionToggle = () => {
+    const newVersion = EctoplasmConfig.toggleVersion();
+    setContractVersion(newVersion);
+    // Reload page to reinitialize with new contracts
+    window.location.reload();
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -95,6 +104,15 @@ export function Header() {
                       {isDark ? 'Light mode' : 'Dark mode'}
                     </button>
                   </li>
+                  <li>
+                    <button
+                      className="btn ghost"
+                      onClick={handleVersionToggle}
+                      style={{ width: '100%', textAlign: 'left' }}
+                    >
+                      Contracts: {contractVersion === 'native' ? 'Native' : 'Odra'}
+                    </button>
+                  </li>
                 </ul>
               </div>
             </div>
@@ -138,6 +156,7 @@ export function Header() {
           <Link to="/launchpad" className={isActive('/launchpad') ? 'active' : ''}>Launch Pad</Link>
           <Link to="/liquidity" className={isActive('/liquidity') ? 'active' : ''}>Earn</Link>
           <Link to="/faucet" className={isActive('/faucet') ? 'active' : ''}>Faucet</Link>
+          <Link to="/wallet" className={isActive('/wallet') ? 'active' : ''}>Wallet</Link>
           <button
             className="btn ghost"
             onClick={toggleTheme}

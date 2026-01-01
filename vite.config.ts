@@ -7,31 +7,38 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy for Casper mainnet RPC to bypass CORS
-      '/api/casper-mainnet': {
-        target: 'https://node.mainnet.casper.network',
+      '/_casper/mainnet': {
+        target: 'https://node.mainnet.casper.network/rpc',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/casper-mainnet/, ''),
+        rewrite: () => '',
         secure: true,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            // Remove headers that might cause issues
-            proxyReq.removeHeader('origin');
-            proxyReq.removeHeader('referer');
-          });
+        headers: {
+          'Content-Type': 'application/json',
         },
       },
       // Proxy for Casper testnet RPC
-      '/api/casper-testnet': {
-        target: 'https://node.testnet.casper.network',
+      '/_casper/testnet': {
+        target: 'https://node.testnet.casper.network/rpc',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/casper-testnet/, ''),
+        rewrite: () => '',
         secure: true,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            proxyReq.removeHeader('origin');
-            proxyReq.removeHeader('referer');
-          });
+        headers: {
+          'Content-Type': 'application/json',
         },
+      },
+      // Proxy for CSPR.cloud API (testnet)
+      '/_csprcloud/testnet': {
+        target: 'https://api.testnet.cspr.cloud',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/_csprcloud\/testnet/, ''),
+        secure: true,
+      },
+      // Proxy for CSPR.cloud API (mainnet)
+      '/_csprcloud/mainnet': {
+        target: 'https://api.cspr.cloud',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/_csprcloud\/mainnet/, ''),
+        secure: true,
       },
     },
   },
