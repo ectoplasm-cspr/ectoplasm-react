@@ -7,24 +7,23 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy for Casper mainnet RPC to bypass CORS
-      '/api/casper-mainnet': {
+      '/_casper/mainnet': {
         target: 'https://node.mainnet.casper.network',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/casper-mainnet/, ''),
+        rewrite: () => '/rpc',
         secure: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
-            // Remove headers that might cause issues
             proxyReq.removeHeader('origin');
             proxyReq.removeHeader('referer');
           });
         },
       },
       // Proxy for Casper testnet RPC
-      '/api/casper-testnet': {
+      '/_casper/testnet': {
         target: 'https://node.testnet.casper.network',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/casper-testnet/, ''),
+        rewrite: () => '/rpc',
         secure: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {

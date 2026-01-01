@@ -3,6 +3,14 @@
  * TypeScript port for React application
  */
 
+import {
+  CasperClient,
+  CLPublicKey,
+  CLValueBuilder,
+  RuntimeArgs,
+  DeployUtil,
+  CLList
+} from 'casper-js-sdk/dist/lib';
 import { EctoplasmConfig, TokenConfig } from '../config/ectoplasm';
 import { hexToBytes, formatTokenAmount, parseTokenAmount } from '../utils/format';
 
@@ -41,50 +49,22 @@ export interface DeployResult {
   error?: string;
 }
 
-// SDK class references (set during init)
-let CasperClientClass: any = null;
-let CLPublicKeyClass: any = null;
-let CLValueBuilderClass: any = null;
-let RuntimeArgsClass: any = null;
-let DeployUtilClass: any = null;
-let CLListClass: any = null;
-
 class CasperServiceClass {
-  private client: any = null;
+  private client: CasperClient | null = null;
   private initialized: boolean = false;
   private sdkAvailable: boolean = false;
   private initError: string | null = null;
 
   /**
-   * Initialize the Casper client and resolve SDK classes
+   * Initialize the Casper client
    */
   init(): boolean {
     if (this.initialized) return this.sdkAvailable;
 
     const network = EctoplasmConfig.getNetwork();
 
-    // Try to resolve SDK from imports or window
     try {
-      // For browser with CDN-loaded SDK
-      const w = window as any;
-      const sdk = w.Casper || w.CasperSDK || w.casper_js_sdk || w;
-
-      CasperClientClass = sdk.CasperClient || w.CasperClient;
-      CLPublicKeyClass = sdk.CLPublicKey || w.CLPublicKey;
-      CLValueBuilderClass = sdk.CLValueBuilder || w.CLValueBuilder;
-      RuntimeArgsClass = sdk.RuntimeArgs || w.RuntimeArgs;
-      DeployUtilClass = sdk.DeployUtil || w.DeployUtil;
-      CLListClass = sdk.CLList || w.CLList;
-
-      if (!CasperClientClass) {
-        this.initError = 'Casper SDK not loaded. Blockchain features are unavailable.';
-        console.warn('CasperService:', this.initError);
-        this.initialized = true;
-        this.sdkAvailable = false;
-        return false;
-      }
-
-      this.client = new CasperClientClass(network.rpcUrl);
+      this.client = new CasperClient(network.rpcUrl);
       this.initialized = true;
       this.sdkAvailable = true;
       console.log(`CasperService initialized for ${network.name}`);
@@ -125,36 +105,173 @@ class CasperServiceClass {
       return { raw: BigInt(0), formatted: '0', decimals: 18 };
     }
 
+    const tokenConfig = EctoplasmConfig.getTokenByHash(tokenHash);
+    const decimals = tokenConfig?.decimals || 18;
+
     try {
-      const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+      const publicKey = CLPublicKey.fromHex(publicKeyHex);
       const accountHash = publicKey.toAccountHashStr();
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
-      const balanceKey = accountHash.replace('account-hash-', '');
       const contractHash = tokenHash.replace('hash-', '');
 
-      const result = await this.client.nodeClient.getDictionaryItemByName(
-        stateRootHash,
-        contractHash,
-        'balances',
-        balanceKey
+      // Try standard CEP-18 dictionary query with base64 key format
+      // CEP-18 uses base64(Key bytes) for dictionary keys
+      try {
+        const balance = await this.queryCep18Balance(contractHash, accountHash);
+        if (balance > BigInt(0)) {
+          return {
+            raw: balance,
+            formatted: formatTokenAmount(balance.toString(), decimals),
+            decimals
+          };
+        }
+      } catch (e) {
+        console.debug('[CEP-18] Standard query failed:', e);
+      }
+
+      // Note: Odra CEP-18 tokens use a different storage pattern
+      // The "balances" dictionary is created dynamically and may not be accessible via standard RPC
+      // For Odra tokens, CSPR.cloud API is recommended once indexing is improved
+
+      return { raw: BigInt(0), formatted: '0', decimals };
+    } catch (error: any) {
+      console.error('Token balance error:', error);
+      return { raw: BigInt(0), formatted: '0', decimals };
+    }
+  }
+
+  /**
+   * Query CEP-18 token balance using standard dictionary format
+   * Tries V2 hex format first (Casper 2.0 native), then falls back to V1 base64 format
+   */
+  private async queryCep18Balance(contractHash: string, accountHash: string): Promise<bigint> {
+    const network = EctoplasmConfig.getNetwork();
+    const accountHashHex = accountHash.replace('account-hash-', '');
+
+    // Get state root hash first
+    const stateRootResponse = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'chain_get_state_root_hash'
+      })
+    });
+    const stateRootData = await stateRootResponse.json();
+    const stateRootHash = stateRootData?.result?.state_root_hash;
+
+    if (!stateRootHash) {
+      throw new Error('Could not get state root hash');
+    }
+
+    // Try V2 format first: hex-encoded account hash (Casper 2.0 native contracts)
+    try {
+      const v2Balance = await this.queryBalanceWithKey(contractHash, accountHashHex, stateRootHash);
+      if (v2Balance > BigInt(0)) {
+        return v2Balance;
+      }
+    } catch (e) {
+      console.debug('[CEP-18] V2 hex format query failed, trying V1 format');
+    }
+
+    // Fallback to V1 format: base64 encoded Key bytes (standard CEP-18)
+    const keyBytes = new Uint8Array(33);
+    keyBytes[0] = 0x00; // Account variant tag
+    const hashBytes = hexToBytes(accountHashHex);
+    keyBytes.set(hashBytes, 1);
+    const base64Key = btoa(String.fromCharCode(...keyBytes));
+
+    return await this.queryBalanceWithKey(contractHash, base64Key, stateRootHash);
+  }
+
+  /**
+   * Query balance dictionary with a specific key format
+   */
+  private async queryBalanceWithKey(contractHash: string, dictKey: string, stateRootHash: string): Promise<bigint> {
+    const network = EctoplasmConfig.getNetwork();
+
+    const response = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'state_get_dictionary_item',
+        params: {
+          state_root_hash: stateRootHash,
+          dictionary_identifier: {
+            ContractNamedKey: {
+              key: `hash-${contractHash}`,
+              dictionary_name: 'balances',
+              dictionary_item_key: dictKey
+            }
+          }
+        }
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error.message || 'Query failed');
+    }
+
+    const clValue = data.result?.stored_value?.CLValue;
+    if (clValue?.parsed !== undefined && clValue?.parsed !== null) {
+      return BigInt(clValue.parsed.toString());
+    }
+
+    return BigInt(0);
+  }
+
+  /**
+   * Query all CEP-18 token balances using CSPR.cloud API
+   * This is the most reliable way to get token balances for Odra-based contracts
+   */
+  async getAllTokenBalancesFromCsprCloud(accountHash: string): Promise<Record<string, bigint>> {
+    const balances: Record<string, bigint> = {};
+    const apiKey = EctoplasmConfig.csprCloud.apiKey;
+
+    if (!apiKey) {
+      console.debug('[CSPR.cloud] No API key configured');
+      return balances;
+    }
+
+    const network = EctoplasmConfig.getNetwork();
+    const accountHashClean = accountHash.replace('account-hash-', '');
+
+    try {
+      const response = await fetch(
+        `${network.apiUrl}/accounts/${accountHashClean}/ft-token-ownership`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': apiKey
+          }
+        }
       );
 
-      const balance = BigInt(result.CLValue?.data?.toString() || '0');
-      const tokenConfig = EctoplasmConfig.getTokenByHash(tokenHash);
-      const decimals = tokenConfig?.decimals || 18;
-
-      return {
-        raw: balance,
-        formatted: formatTokenAmount(balance.toString(), decimals),
-        decimals
-      };
-    } catch (error: any) {
-      if (error.message?.includes('ValueNotFound') ||
-          error.message?.includes('Failed to find') ||
-          error.code === -32003) {
-        return { raw: BigInt(0), formatted: '0', decimals: 18 };
+      if (!response.ok) {
+        console.debug(`[CSPR.cloud] API returned ${response.status}`);
+        return balances;
       }
-      throw error;
+
+      const data = await response.json();
+
+      if (data?.data && Array.isArray(data.data)) {
+        for (const ownership of data.data) {
+          const token = EctoplasmConfig.getTokenByPackageHash(ownership.contract_package_hash);
+          if (token) {
+            balances[token.symbol] = BigInt(ownership.balance || '0');
+            console.debug(`[CSPR.cloud] Found ${token.symbol} balance: ${ownership.balance}`);
+          }
+        }
+      }
+
+      return balances;
+    } catch (error) {
+      console.error('[CSPR.cloud] Error fetching token balances:', error);
+      return balances;
     }
   }
 
@@ -209,7 +326,43 @@ class CasperServiceClass {
     // Get native CSPR balance
     balances.CSPR = await this.getNativeBalance(publicKeyHex);
 
-    // Get CEP-18 token balances if SDK available
+    // Initialize all CEP-18 token balances to 0
+    Object.entries(tokens)
+      .filter(([_, config]) => config.hash)
+      .forEach(([symbol, config]) => {
+        balances[symbol] = { raw: BigInt(0), formatted: '0', decimals: config.decimals };
+      });
+
+    // Try CSPR.cloud API first (best for Odra contracts)
+    if (EctoplasmConfig.hasCsprCloudApiKey()) {
+      try {
+        const publicKey = CLPublicKey.fromHex(publicKeyHex);
+        const accountHash = publicKey.toAccountHashStr();
+        const csprCloudBalances = await this.getAllTokenBalancesFromCsprCloud(accountHash);
+
+        for (const [symbol, rawBalance] of Object.entries(csprCloudBalances)) {
+          const tokenConfig = EctoplasmConfig.getToken(symbol);
+          if (tokenConfig) {
+            balances[symbol] = {
+              raw: rawBalance,
+              formatted: formatTokenAmount(rawBalance.toString(), tokenConfig.decimals),
+              decimals: tokenConfig.decimals
+            };
+          }
+        }
+
+        // If we got results from CSPR.cloud, return early
+        const hasBalances = Object.values(csprCloudBalances).some(b => b > BigInt(0));
+        if (hasBalances || Object.keys(csprCloudBalances).length > 0) {
+          console.debug('[Balances] Using CSPR.cloud API results');
+          return balances;
+        }
+      } catch (e) {
+        console.debug('[Balances] CSPR.cloud API failed, falling back to RPC:', e);
+      }
+    }
+
+    // Fallback: Try direct RPC queries for standard CEP-18 contracts
     if (this.isAvailable()) {
       const tokenPromises = Object.entries(tokens)
         .filter(([_, config]) => config.hash)
@@ -249,11 +402,11 @@ class CasperServiceClass {
 
     try {
       const factoryHash = EctoplasmConfig.contracts.factory;
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const [token0, token1] = this.sortTokens(tokenA, tokenB);
       const pairKey = `${token0.replace('hash-', '')}_${token1.replace('hash-', '')}`;
 
-      const result = await this.client.nodeClient.getDictionaryItemByName(
+      const result = await this.client!.nodeClient.getDictionaryItemByName(
         stateRootHash,
         factoryHash.replace('hash-', ''),
         'pairs',
@@ -282,7 +435,7 @@ class CasperServiceClass {
         return { reserveA: BigInt(0), reserveB: BigInt(0), exists: false };
       }
 
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const reserve0 = await this.queryContractNamedKey(pairAddress, 'reserve0', stateRootHash);
       const reserve1 = await this.queryContractNamedKey(pairAddress, 'reserve1', stateRootHash);
 
@@ -313,8 +466,8 @@ class CasperServiceClass {
     stateRootHash?: string
   ): Promise<string | null> {
     try {
-      const result = await this.client.nodeClient.getBlockState(
-        stateRootHash || await this.client.nodeClient.getStateRootHash(),
+      const result = await this.client!.nodeClient.getBlockState(
+        stateRootHash || await this.client!.nodeClient.getStateRootHash(),
         `hash-${contractHash.replace('hash-', '')}`,
         [keyName]
       );
@@ -502,14 +655,14 @@ class CasperServiceClass {
     if (!tokenHash) return false;
 
     try {
-      const accountHash = CLPublicKeyClass.fromHex(ownerPublicKey).toAccountHashStr();
+      const accountHash = CLPublicKey.fromHex(ownerPublicKey).toAccountHashStr();
       const routerHash = EctoplasmConfig.contracts.router;
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const ownerKey = accountHash.replace('account-hash-', '');
       const spenderKey = routerHash.replace('hash-', '');
       const allowanceKey = `${ownerKey}_${spenderKey}`;
 
-      const result = await this.client.nodeClient.getDictionaryItemByName(
+      const result = await this.client!.nodeClient.getDictionaryItemByName(
         stateRootHash,
         tokenHash.replace('hash-', ''),
         'allowances',
@@ -530,31 +683,31 @@ class CasperServiceClass {
   ): any {
     this.ensureInit();
 
-    const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+    const publicKey = CLPublicKey.fromHex(publicKeyHex);
     const routerHash = EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.approve;
     const network = EctoplasmConfig.getNetwork();
 
-    const args = RuntimeArgsClass.fromMap({
-      spender: CLValueBuilderClass.key(
-        CLValueBuilderClass.byteArray(hexToBytes(routerHash))
+    const args = RuntimeArgs.fromMap({
+      spender: CLValueBuilder.key(
+        CLValueBuilder.byteArray(hexToBytes(routerHash))
       ),
-      amount: CLValueBuilderClass.u256(amount.toString())
+      amount: CLValueBuilder.u256(amount.toString())
     });
 
-    return DeployUtilClass.makeDeploy(
-      new DeployUtilClass.DeployParams(
+    return DeployUtil.makeDeploy(
+      new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
         1,
         3600000
       ),
-      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
         hexToBytes(tokenHash),
         'approve',
         args
       ),
-      DeployUtilClass.standardPayment(gasLimit)
+      DeployUtil.standardPayment(gasLimit)
     );
   }
 
@@ -569,7 +722,7 @@ class CasperServiceClass {
       throw new Error('Invalid quote for swap');
     }
 
-    const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+    const publicKey = CLPublicKey.fromHex(publicKeyHex);
     const routerHash = EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.swap;
     const network = EctoplasmConfig.getNetwork();
@@ -578,38 +731,38 @@ class CasperServiceClass {
     const slippageMultiplier = BigInt(Math.floor((1 - slippagePercent / 100) * 10000));
     const amountOutMin = quote.amountOutRaw * slippageMultiplier / BigInt(10000);
 
-    const pathList = new CLListClass([
-      CLValueBuilderClass.byteArray(hexToBytes(quote.path[0])),
-      CLValueBuilderClass.byteArray(hexToBytes(quote.path[1]))
+    const pathList = new CLList([
+      CLValueBuilder.byteArray(hexToBytes(quote.path[0])),
+      CLValueBuilder.byteArray(hexToBytes(quote.path[1]))
     ]);
 
-    const args = RuntimeArgsClass.fromMap({
-      amount_in: CLValueBuilderClass.u256(quote.amountInRaw.toString()),
-      amount_out_min: CLValueBuilderClass.u256(amountOutMin.toString()),
+    const args = RuntimeArgs.fromMap({
+      amount_in: CLValueBuilder.u256(quote.amountInRaw.toString()),
+      amount_out_min: CLValueBuilder.u256(amountOutMin.toString()),
       path: pathList,
-      to: CLValueBuilderClass.key(CLValueBuilderClass.byteArray(publicKey.toAccountHash())),
-      deadline: CLValueBuilderClass.u64(deadline)
+      to: CLValueBuilder.key(CLValueBuilder.byteArray(publicKey.toAccountHash())),
+      deadline: CLValueBuilder.u64(deadline)
     });
 
-    return DeployUtilClass.makeDeploy(
-      new DeployUtilClass.DeployParams(
+    return DeployUtil.makeDeploy(
+      new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
         1,
         3600000
       ),
-      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
         hexToBytes(routerHash),
         'swap_exact_tokens_for_tokens',
         args
       ),
-      DeployUtilClass.standardPayment(gasLimit)
+      DeployUtil.standardPayment(gasLimit)
     );
   }
 
   async submitDeploy(signedDeploy: any): Promise<string> {
     this.ensureInit();
-    return await this.client.putDeploy(signedDeploy);
+    return await this.client!.putDeploy(signedDeploy);
   }
 
   async waitForDeploy(deployHash: string, timeout: number = 300000): Promise<DeployResult> {
@@ -620,7 +773,7 @@ class CasperServiceClass {
 
     while (Date.now() - startTime < timeout) {
       try {
-        const result = await this.client.nodeClient.getDeployInfo(deployHash);
+        const result = await this.client!.nodeClient.getDeployInfo(deployHash);
 
         if (result?.execution_results?.length > 0) {
           const execResult = result.execution_results[0].result;
@@ -660,31 +813,31 @@ class CasperServiceClass {
   ): any {
     this.ensureInit();
 
-    const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+    const publicKey = CLPublicKey.fromHex(publicKeyHex);
     const gasLimit = EctoplasmConfig.gasLimits.approve; // Similar gas to approve
     const network = EctoplasmConfig.getNetwork();
 
     // Recipient is the Pair contract hash
-    const args = RuntimeArgsClass.fromMap({
-      recipient: CLValueBuilderClass.key(
-        CLValueBuilderClass.byteArray(hexToBytes(recipientHash))
+    const args = RuntimeArgs.fromMap({
+      recipient: CLValueBuilder.key(
+        CLValueBuilder.byteArray(hexToBytes(recipientHash))
       ),
-      amount: CLValueBuilderClass.u256(amount.toString())
+      amount: CLValueBuilder.u256(amount.toString())
     });
 
-    return DeployUtilClass.makeDeploy(
-      new DeployUtilClass.DeployParams(
+    return DeployUtil.makeDeploy(
+      new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
         1,
         3600000
       ),
-      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
         hexToBytes(tokenHash),
         'transfer',
         args
       ),
-      DeployUtilClass.standardPayment(gasLimit)
+      DeployUtil.standardPayment(gasLimit)
     );
   }
 
@@ -697,30 +850,30 @@ class CasperServiceClass {
   ): any {
     this.ensureInit();
 
-    const publicKey = CLPublicKeyClass.fromHex(recipientPublicKeyHex);
+    const publicKey = CLPublicKey.fromHex(recipientPublicKeyHex);
     const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
     const network = EctoplasmConfig.getNetwork();
 
     // The 'to' argument is where LP tokens will be minted
-    const args = RuntimeArgsClass.fromMap({
-      to: CLValueBuilderClass.key(
-        CLValueBuilderClass.byteArray(publicKey.toAccountHash())
+    const args = RuntimeArgs.fromMap({
+      to: CLValueBuilder.key(
+        CLValueBuilder.byteArray(publicKey.toAccountHash())
       )
     });
 
-    return DeployUtilClass.makeDeploy(
-      new DeployUtilClass.DeployParams(
+    return DeployUtil.makeDeploy(
+      new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
         1,
         3600000
       ),
-      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
         hexToBytes(pairHash),
         'mint',
         args
       ),
-      DeployUtilClass.standardPayment(gasLimit)
+      DeployUtil.standardPayment(gasLimit)
     );
   }
 
@@ -731,14 +884,14 @@ class CasperServiceClass {
     this.ensureInit();
 
     try {
-      const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+      const publicKey = CLPublicKey.fromHex(publicKeyHex);
       const accountHash = publicKey.toAccountHashStr();
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const balanceKey = accountHash.replace('account-hash-', '');
       const contractHash = pairHash.replace('hash-', '');
 
       // LP tokens are stored in the pair's balances dictionary
-      const result = await this.client.nodeClient.getDictionaryItemByName(
+      const result = await this.client!.nodeClient.getDictionaryItemByName(
         stateRootHash,
         contractHash,
         'balances',
@@ -769,7 +922,7 @@ class CasperServiceClass {
     this.ensureInit();
 
     try {
-      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const totalSupply = await this.queryContractNamedKey(pairHash, 'total_supply', stateRootHash);
       return BigInt(totalSupply || '0');
     } catch (error) {

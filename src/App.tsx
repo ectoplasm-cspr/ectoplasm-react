@@ -12,6 +12,7 @@ const Launchpad = lazy(() => import('./pages/Launchpad'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Faucet = lazy(() => import('./pages/Faucet'));
+const Wallet = lazy(() => import('./pages/Wallet'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/privacy" element={<Privacy />} />
                     <Route path="/faucet" element={<Faucet />} />
+                    <Route path="/wallet" element={<Wallet />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Suspense>

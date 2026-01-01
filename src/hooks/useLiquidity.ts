@@ -133,8 +133,43 @@ export function useLiquidity(): UseLiquidityResult {
       return;
     }
 
+    // First check if we have a hardcoded pair address (works without SDK)
+    const configuredPair = EctoplasmConfig.getConfiguredPairAddress(tokenAConfig.hash, tokenBConfig.hash);
+
+    if (configuredPair) {
+      // Pair exists in config - mark as available
+      setPairExists(true);
+
+      // Try to fetch reserves if SDK available, otherwise show zeros
+      if (CasperService.isAvailable()) {
+        try {
+          const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
+          const supply = await CasperService.getLPTokenTotalSupply(configuredPair);
+
+          setReserveA(formatTokenAmount(reserves.reserveA.toString(), tokenAConfig.decimals));
+          setReserveB(formatTokenAmount(reserves.reserveB.toString(), tokenBConfig.decimals));
+          setTotalSupply(formatTokenAmount(supply.toString(), 18));
+        } catch (err) {
+          console.error('Error fetching reserves:', err);
+          setReserveA('0');
+          setReserveB('0');
+          setTotalSupply('0');
+        }
+      } else {
+        // SDK not available but pair exists - show zeros for reserves
+        setReserveA('0');
+        setReserveB('0');
+        setTotalSupply('0');
+      }
+      return;
+    }
+
+    // No hardcoded pair - try to query Factory if SDK available
     if (!CasperService.isAvailable()) {
       setPairExists(false);
+      setReserveA('0');
+      setReserveB('0');
+      setTotalSupply('0');
       return;
     }
 
