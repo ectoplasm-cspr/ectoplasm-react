@@ -159,18 +159,19 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
 // Configuration object
 export const EctoplasmConfig = {
   // Network Configuration
-  // Uses Vite proxy in dev (/_casper and /_csprcloud prefixes to avoid CORS)
+  // In development: Uses Vite proxy (/_casper and /_csprcloud prefixes to avoid CORS)
+  // In production: Uses Vercel API routes (/api/casper and /api/csprcloud)
   networks: {
     testnet: {
       name: 'Casper Testnet',
-      rpcUrl: '/_casper/testnet',
-      apiUrl: '/_csprcloud/testnet',
+      rpcUrl: import.meta.env.DEV ? '/_casper/testnet' : '/api/casper/testnet',
+      apiUrl: import.meta.env.DEV ? '/_csprcloud/testnet' : '/api/csprcloud/testnet',
       chainName: 'casper-test',
     },
     mainnet: {
       name: 'Casper Mainnet',
-      rpcUrl: '/_casper/mainnet',
-      apiUrl: '/_csprcloud/mainnet',
+      rpcUrl: import.meta.env.DEV ? '/_casper/mainnet' : '/api/casper/mainnet',
+      apiUrl: import.meta.env.DEV ? '/_csprcloud/mainnet' : '/api/csprcloud/mainnet',
       chainName: 'casper',
     }
   } as Record<NetworkName, NetworkConfig>,
@@ -247,7 +248,9 @@ export const EctoplasmConfig = {
   // Helper to find token by symbol
   getToken(symbol: string): TokenConfig | null {
     const key = symbol?.toUpperCase() as TokenSymbol;
-    return this.tokens[key] || null;
+    const token = this.tokens[key] || null;
+    console.log('[EctoplasmConfig.getToken] symbol:', symbol, 'hash:', token?.hash);
+    return token;
   },
 
   // Helper to find token by hash
@@ -277,13 +280,21 @@ export const EctoplasmConfig = {
 
   // Get configured pair address
   getConfiguredPairAddress(tokenA: string, tokenB: string): string | null {
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenA:', tokenA, 'tokenB:', tokenB);
     const tokenAConfig = this.getTokenByHash(tokenA);
     const tokenBConfig = this.getTokenByHash(tokenB);
-    if (!tokenAConfig || !tokenBConfig) return null;
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenAConfig:', tokenAConfig?.symbol, 'tokenBConfig:', tokenBConfig?.symbol);
+
+    if (!tokenAConfig || !tokenBConfig) {
+      console.log('[EctoplasmConfig.getConfiguredPairAddress] Token config not found, returning null');
+      return null;
+    }
 
     const key1 = `${tokenAConfig.symbol}/${tokenBConfig.symbol}`;
     const key2 = `${tokenBConfig.symbol}/${tokenAConfig.symbol}`;
-    return this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
+    const pairAddress = this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] key1:', key1, 'key2:', key2, 'pairAddress:', pairAddress);
+    return pairAddress;
   }
 };
 

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { DeployUtil, CLPublicKey } from 'casper-js-sdk/dist/lib';
 import { useWallet } from '../contexts/WalletContext';
 import { CasperService } from '../services/casper';
 import { EctoplasmConfig } from '../config/ectoplasm';
@@ -361,11 +362,16 @@ export function useLiquidity(): UseLiquidityResult {
   }, [refreshPositions]);
 
   const addLiquidity = useCallback(async (): Promise<string | null> => {
+    console.log('[addLiquidity] Starting with Router approach...');
+    console.log('[addLiquidity] connected:', connected);
+    console.log('[addLiquidity] publicKey:', publicKey);
+
     if (!connected || !publicKey) {
       setError('Please connect your wallet');
       return null;
     }
 
+    console.log('[addLiquidity] amountA:', amountA, 'amountB:', amountB);
     if (!amountA || !amountB || parseFloat(amountA) <= 0 || parseFloat(amountB) <= 0) {
       setError('Please enter valid amounts');
       return null;
@@ -374,13 +380,19 @@ export function useLiquidity(): UseLiquidityResult {
     const tokenAConfig = EctoplasmConfig.getToken(tokenA);
     const tokenBConfig = EctoplasmConfig.getToken(tokenB);
 
+    console.log('[addLiquidity] tokenA:', tokenA, 'config:', tokenAConfig);
+    console.log('[addLiquidity] tokenB:', tokenB, 'config:', tokenBConfig);
+
     if (!tokenAConfig?.hash || !tokenBConfig?.hash) {
       setError('Token contracts not available');
       return null;
     }
 
-    // Get pair address
+    // Verify pair exists (Router will fail if it doesn't)
+    console.log('[addLiquidity] Getting pair address for', tokenAConfig.hash, tokenBConfig.hash);
     const pairAddress = await CasperService.getPairAddress(tokenAConfig.hash, tokenBConfig.hash);
+    console.log('[addLiquidity] pairAddress:', pairAddress);
+
     if (!pairAddress) {
       setError('Pair does not exist. Please contact admin to create it.');
       return null;
@@ -399,53 +411,135 @@ export function useLiquidity(): UseLiquidityResult {
       const amountARaw = BigInt(parseTokenAmount(amountA, tokenAConfig.decimals));
       const amountBRaw = BigInt(parseTokenAmount(amountB, tokenBConfig.decimals));
 
-      // Step 1: Transfer Token A to Pair contract
-      setTxStep(`Transferring ${tokenA} to pool...`);
-      const transferADeploy = CasperService.buildTransferDeploy(
+      // Calculate minimum amounts with 1% slippage tolerance
+      const slippageMultiplier = BigInt(9900); // 99% = 1% slippage
+      const amountAMin = (amountARaw * slippageMultiplier) / BigInt(10000);
+      const amountBMin = (amountBRaw * slippageMultiplier) / BigInt(10000);
+
+      console.log('[addLiquidity] amountARaw:', amountARaw.toString());
+      console.log('[addLiquidity] amountBRaw:', amountBRaw.toString());
+      console.log('[addLiquidity] amountAMin:', amountAMin.toString());
+      console.log('[addLiquidity] amountBMin:', amountBMin.toString());
+
+      // Step 1: Approve Token A (if needed)
+      setTxStep(`Checking ${tokenA} allowance...`);
+      const hasAllowanceA = await CasperService.checkAllowance(tokenAConfig.hash, publicKey, amountARaw);
+      console.log('[addLiquidity] hasAllowanceA:', hasAllowanceA);
+
+      if (!hasAllowanceA) {
+        setTxStep(`Approving ${tokenA}...`);
+        console.log('[addLiquidity] Building approve deploy for tokenA...');
+
+        const approveADeploy = CasperService.buildApproveDeploy(
+          tokenAConfig.hash,
+          amountARaw,
+          publicKey
+        );
+
+        const approveAJson = DeployUtil.deployToJson(approveADeploy);
+        console.log('[addLiquidity] Requesting wallet signature for approve A...');
+        const walletResponseA = await wallet.sign(JSON.stringify(approveAJson), publicKey);
+
+        if (walletResponseA.cancelled) {
+          throw new Error('User cancelled the transaction');
+        }
+
+        const signedApproveA = DeployUtil.setSignature(
+          approveADeploy,
+          walletResponseA.signature,
+          CLPublicKey.fromHex(publicKey)
+        );
+
+        const approveAHash = await CasperService.submitDeploy(signedApproveA);
+        console.log('[addLiquidity] approveAHash:', approveAHash);
+
+        setTxStep(`Waiting for ${tokenA} approval...`);
+        const resultA = await CasperService.waitForDeploy(approveAHash);
+        if (!resultA.success) {
+          throw new Error(`${tokenA} approval failed: ${resultA.error}`);
+        }
+        console.log('[addLiquidity] Token A approved successfully');
+      }
+
+      // Step 2: Approve Token B (if needed)
+      setTxStep(`Checking ${tokenB} allowance...`);
+      const hasAllowanceB = await CasperService.checkAllowance(tokenBConfig.hash, publicKey, amountBRaw);
+      console.log('[addLiquidity] hasAllowanceB:', hasAllowanceB);
+
+      if (!hasAllowanceB) {
+        setTxStep(`Approving ${tokenB}...`);
+        console.log('[addLiquidity] Building approve deploy for tokenB...');
+
+        const approveBDeploy = CasperService.buildApproveDeploy(
+          tokenBConfig.hash,
+          amountBRaw,
+          publicKey
+        );
+
+        const approveBJson = DeployUtil.deployToJson(approveBDeploy);
+        console.log('[addLiquidity] Requesting wallet signature for approve B...');
+        const walletResponseB = await wallet.sign(JSON.stringify(approveBJson), publicKey);
+
+        if (walletResponseB.cancelled) {
+          throw new Error('User cancelled the transaction');
+        }
+
+        const signedApproveB = DeployUtil.setSignature(
+          approveBDeploy,
+          walletResponseB.signature,
+          CLPublicKey.fromHex(publicKey)
+        );
+
+        const approveBHash = await CasperService.submitDeploy(signedApproveB);
+        console.log('[addLiquidity] approveBHash:', approveBHash);
+
+        setTxStep(`Waiting for ${tokenB} approval...`);
+        const resultB = await CasperService.waitForDeploy(approveBHash);
+        if (!resultB.success) {
+          throw new Error(`${tokenB} approval failed: ${resultB.error}`);
+        }
+        console.log('[addLiquidity] Token B approved successfully');
+      }
+
+      // Step 3: Call add_liquidity on Router
+      setTxStep('Adding liquidity...');
+      console.log('[addLiquidity] Building add_liquidity deploy...');
+
+      const addLiquidityDeploy = CasperService.buildAddLiquidityDeploy(
         tokenAConfig.hash,
-        pairAddress,
-        amountARaw,
-        publicKey
-      );
-
-      const signedTransferA = await wallet.sign(JSON.stringify(transferADeploy), publicKey);
-      const transferAHash = await CasperService.submitDeploy(signedTransferA);
-
-      const resultA = await CasperService.waitForDeploy(transferAHash);
-      if (!resultA.success) {
-        throw new Error(`${tokenA} transfer failed: ${resultA.error}`);
-      }
-
-      // Step 2: Transfer Token B to Pair contract
-      setTxStep(`Transferring ${tokenB} to pool...`);
-      const transferBDeploy = CasperService.buildTransferDeploy(
         tokenBConfig.hash,
-        pairAddress,
+        amountARaw,
         amountBRaw,
+        amountAMin,
+        amountBMin,
         publicKey
       );
 
-      const signedTransferB = await wallet.sign(JSON.stringify(transferBDeploy), publicKey);
-      const transferBHash = await CasperService.submitDeploy(signedTransferB);
+      const addLiquidityJson = DeployUtil.deployToJson(addLiquidityDeploy);
+      console.log('[addLiquidity] Requesting wallet signature for add_liquidity...');
+      const walletResponseLiquidity = await wallet.sign(JSON.stringify(addLiquidityJson), publicKey);
 
-      const resultB = await CasperService.waitForDeploy(transferBHash);
-      if (!resultB.success) {
-        throw new Error(`${tokenB} transfer failed: ${resultB.error}`);
+      if (walletResponseLiquidity.cancelled) {
+        throw new Error('User cancelled the transaction');
       }
 
-      // Step 3: Call mint on Pair to receive LP tokens
-      setTxStep('Minting LP tokens...');
-      const mintDeploy = CasperService.buildMintLiquidityDeploy(pairAddress, publicKey);
+      const signedAddLiquidity = DeployUtil.setSignature(
+        addLiquidityDeploy,
+        walletResponseLiquidity.signature,
+        CLPublicKey.fromHex(publicKey)
+      );
 
-      const signedMint = await wallet.sign(JSON.stringify(mintDeploy), publicKey);
-      const mintHash = await CasperService.submitDeploy(signedMint);
+      const addLiquidityHash = await CasperService.submitDeploy(signedAddLiquidity);
+      console.log('[addLiquidity] addLiquidityHash:', addLiquidityHash);
 
-      const resultMint = await CasperService.waitForDeploy(mintHash);
-      if (!resultMint.success) {
-        throw new Error(`Mint failed: ${resultMint.error}`);
+      setTxStep('Waiting for confirmation...');
+      const resultLiquidity = await CasperService.waitForDeploy(addLiquidityHash);
+      if (!resultLiquidity.success) {
+        throw new Error(`Add liquidity failed: ${resultLiquidity.error}`);
       }
 
       // Success! Refresh everything
+      console.log('[addLiquidity] Success! Refreshing...');
       setTxStep('');
       await refreshBalances();
       await refreshPositions();
@@ -455,8 +549,9 @@ export function useLiquidity(): UseLiquidityResult {
       setAmountA('');
       setAmountB('');
 
-      return mintHash;
+      return addLiquidityHash;
     } catch (err: any) {
+      console.error('[addLiquidity] Error:', err);
       setError(err.message);
       return null;
     } finally {

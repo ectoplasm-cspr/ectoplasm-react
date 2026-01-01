@@ -12,8 +12,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => '',
         secure: true,
-        headers: {
-          'Content-Type': 'application/json',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Content-Type', 'application/json');
+          });
         },
       },
       // Proxy for Casper testnet RPC
@@ -22,8 +24,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => '',
         secure: true,
-        headers: {
-          'Content-Type': 'application/json',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Content-Type', 'application/json');
+          });
         },
       },
       // Proxy for CSPR.cloud API (testnet)

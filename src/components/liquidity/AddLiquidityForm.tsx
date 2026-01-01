@@ -245,7 +245,8 @@ export function AddLiquidityForm({ defaultTokenA, defaultTokenB }: AddLiquidityF
       {/* Info Text */}
       {connected && pairExists && !loading && (
         <p className="muted tiny" style={{ marginTop: '8px', textAlign: 'center' }}>
-          Adding liquidity requires 3 transactions: Transfer {tokenA}, Transfer {tokenB}, then Mint LP tokens.
+          Adding liquidity may require up to 3 transactions: Approve {tokenA}, Approve {tokenB}, then Add Liquidity.
+          Approvals are skipped if you have sufficient allowance.
         </p>
       )}
     </form>

@@ -450,16 +450,22 @@ class CasperServiceClass {
   // ============================================
 
   async getPairAddress(tokenA: string, tokenB: string): Promise<string | null> {
+    console.log('[CasperService.getPairAddress] Called with tokenA:', tokenA, 'tokenB:', tokenB);
+
     const configuredPair = EctoplasmConfig.getConfiguredPairAddress(tokenA, tokenB);
+    console.log('[CasperService.getPairAddress] configuredPair from config:', configuredPair);
     if (configuredPair) return configuredPair;
 
     this.ensureInit();
 
     try {
       const factoryHash = EctoplasmConfig.contracts.factory;
+      console.log('[CasperService.getPairAddress] factoryHash:', factoryHash);
+
       const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const [token0, token1] = this.sortTokens(tokenA, tokenB);
       const pairKey = `${token0.replace('hash-', '')}_${token1.replace('hash-', '')}`;
+      console.log('[CasperService.getPairAddress] pairKey:', pairKey);
 
       const result = await this.client!.nodeClient.getDictionaryItemByName(
         stateRootHash,
@@ -468,8 +474,10 @@ class CasperServiceClass {
         pairKey
       );
 
+      console.log('[CasperService.getPairAddress] result:', result?.CLValue?.data);
       return result?.CLValue?.data || null;
     } catch (error: any) {
+      console.log('[CasperService.getPairAddress] Error:', error.message);
       if (error.message?.includes('ValueNotFound') || error.message?.includes('Failed to find')) {
         return null;
       }
@@ -869,26 +877,96 @@ class CasperServiceClass {
   }
 
   async submitDeploy(signedDeploy: any): Promise<string> {
+    console.log('[CasperService.submitDeploy] signedDeploy:', signedDeploy);
+    console.log('[CasperService.submitDeploy] signedDeploy type:', typeof signedDeploy);
+    console.log('[CasperService.submitDeploy] has hash?', signedDeploy?.hash);
+    console.log('[CasperService.submitDeploy] has approvals?', signedDeploy?.approvals);
+
     this.ensureInit();
-    return await this.client!.putDeploy(signedDeploy);
+
+    // Convert Deploy object to JSON for RPC submission
+    let deployJson: any;
+    if (signedDeploy && signedDeploy.hash instanceof Uint8Array && signedDeploy.approvals) {
+      console.log('[CasperService.submitDeploy] Converting Deploy object to JSON...');
+      deployJson = DeployUtil.deployToJson(signedDeploy);
+    } else if (typeof signedDeploy === 'string') {
+      console.log('[CasperService.submitDeploy] Parsing string deploy...');
+      try {
+        deployJson = JSON.parse(signedDeploy);
+      } catch (e) {
+        throw new Error(`Failed to parse deploy JSON: ${e}`);
+      }
+    } else if (signedDeploy.deploy) {
+      console.log('[CasperService.submitDeploy] Extracting deploy from wallet response');
+      deployJson = signedDeploy;
+    } else {
+      deployJson = signedDeploy;
+    }
+
+    // Extract just the deploy if wrapped
+    const deployData = deployJson.deploy || deployJson;
+
+    console.log('[CasperService.submitDeploy] Submitting via direct RPC...');
+    const network = EctoplasmConfig.getNetwork();
+
+    // Use direct fetch to submit deploy via account_put_deploy RPC method
+    const response = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'account_put_deploy',
+        params: {
+          deploy: deployData
+        }
+      })
+    });
+
+    const result = await response.json();
+    console.log('[CasperService.submitDeploy] RPC response:', result);
+
+    if (result.error) {
+      console.error('[CasperService.submitDeploy] RPC error:', result.error);
+      throw new Error(result.error.message || `RPC error: ${JSON.stringify(result.error)}`);
+    }
+
+    const deployHash = result.result?.deploy_hash;
+    if (!deployHash) {
+      throw new Error('No deploy hash returned from RPC');
+    }
+
+    console.log('[CasperService.submitDeploy] Deploy hash:', deployHash);
+    return deployHash;
   }
 
   async waitForDeploy(deployHash: string, timeout: number = 300000): Promise<DeployResult> {
+    console.log('[CasperService.waitForDeploy] Waiting for deploy:', deployHash);
     this.ensureInit();
 
     const startTime = Date.now();
     const pollInterval = 5000;
+    let pollCount = 0;
 
     while (Date.now() - startTime < timeout) {
+      pollCount++;
+      console.log(`[CasperService.waitForDeploy] Poll #${pollCount} for deploy ${deployHash.substring(0, 16)}...`);
+
       try {
-        const result = await this.client!.nodeClient.getDeployInfo(deployHash);
+        const result = await this.client!.nodeClient.getDeployInfo(deployHash) as any;
+        console.log('[CasperService.waitForDeploy] getDeployInfo result:', result);
 
-        if (result?.execution_results?.length > 0) {
-          const execResult = result.execution_results[0].result;
+        // Handle Casper 2.0 format (execution_info)
+        if (result?.execution_info?.execution_result) {
+          const execResult = result.execution_info.execution_result;
+          console.log('[CasperService.waitForDeploy] Execution result (2.0 format):', execResult);
 
+          // Casper 2.0 format: execution_result.Success or execution_result.Failure
           if (execResult.Success) {
+            console.log('[CasperService.waitForDeploy] Deploy succeeded!');
             return { success: true, deployHash };
           } else if (execResult.Failure) {
+            console.log('[CasperService.waitForDeploy] Deploy failed:', execResult.Failure);
             return {
               success: false,
               deployHash,
@@ -896,13 +974,36 @@ class CasperServiceClass {
             };
           }
         }
-      } catch (error) {
+
+        // Handle legacy format (execution_results array)
+        if (result?.execution_results?.length > 0) {
+          const execResult = result.execution_results[0].result;
+          console.log('[CasperService.waitForDeploy] Execution result (legacy format):', execResult);
+
+          if (execResult.Success) {
+            console.log('[CasperService.waitForDeploy] Deploy succeeded!');
+            return { success: true, deployHash };
+          } else if (execResult.Failure) {
+            console.log('[CasperService.waitForDeploy] Deploy failed:', execResult.Failure);
+            return {
+              success: false,
+              deployHash,
+              error: execResult.Failure.error_message || 'Transaction failed'
+            };
+          }
+        }
+
+        console.log('[CasperService.waitForDeploy] No execution results yet, deploy still pending...');
+        console.log('[CasperService.waitForDeploy] execution_info:', result?.execution_info);
+      } catch (error: any) {
+        console.log('[CasperService.waitForDeploy] Error polling deploy:', error?.message || error);
         // Deploy not found yet, continue polling
       }
 
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
 
+    console.log('[CasperService.waitForDeploy] Timeout reached');
     return { success: false, deployHash, error: 'Timeout waiting for deploy' };
   }
 
@@ -911,29 +1012,59 @@ class CasperServiceClass {
   // ============================================
 
   /**
-   * Build a CEP-18 transfer deploy to send tokens to the Pair contract
+   * Build an add_liquidity deploy to call Router.add_liquidity()
+   * This is the preferred approach - approve tokens first, then call add_liquidity
    */
-  buildTransferDeploy(
-    tokenHash: string,
-    recipientHash: string,
-    amount: bigint,
-    publicKeyHex: string
+  buildAddLiquidityDeploy(
+    tokenAHash: string,
+    tokenBHash: string,
+    amountADesired: bigint,
+    amountBDesired: bigint,
+    amountAMin: bigint,
+    amountBMin: bigint,
+    publicKeyHex: string,
+    deadlineMs?: number
   ): any {
+    console.log('[CasperService.buildAddLiquidityDeploy] Called with:');
+    console.log('  tokenAHash:', tokenAHash);
+    console.log('  tokenBHash:', tokenBHash);
+    console.log('  amountADesired:', amountADesired?.toString());
+    console.log('  amountBDesired:', amountBDesired?.toString());
+    console.log('  amountAMin:', amountAMin?.toString());
+    console.log('  amountBMin:', amountBMin?.toString());
+
     this.ensureInit();
 
     const publicKey = CLPublicKey.fromHex(publicKeyHex);
-    const gasLimit = EctoplasmConfig.gasLimits.approve; // Similar gas to approve
+    const routerHash = EctoplasmConfig.contracts.router;
+    const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
     const network = EctoplasmConfig.getNetwork();
 
-    // Recipient is the Pair contract hash
+    // Default deadline: 20 minutes from now
+    const deadline = deadlineMs || (Date.now() + EctoplasmConfig.swap.deadlineMinutes * 60 * 1000);
+
+    console.log('  routerHash:', routerHash);
+    console.log('  gasLimit:', gasLimit);
+    console.log('  deadline:', deadline);
+
     const args = RuntimeArgs.fromMap({
-      recipient: CLValueBuilder.key(
-        CLValueBuilder.byteArray(hexToBytes(recipientHash))
+      token_a: CLValueBuilder.key(
+        CLValueBuilder.byteArray(hexToBytes(tokenAHash))
       ),
-      amount: CLValueBuilder.u256(amount.toString())
+      token_b: CLValueBuilder.key(
+        CLValueBuilder.byteArray(hexToBytes(tokenBHash))
+      ),
+      amount_a_desired: CLValueBuilder.u256(amountADesired.toString()),
+      amount_b_desired: CLValueBuilder.u256(amountBDesired.toString()),
+      amount_a_min: CLValueBuilder.u256(amountAMin.toString()),
+      amount_b_min: CLValueBuilder.u256(amountBMin.toString()),
+      to: CLValueBuilder.key(
+        CLValueBuilder.byteArray(publicKey.toAccountHash())
+      ),
+      deadline: CLValueBuilder.u64(deadline)
     });
 
-    return DeployUtil.makeDeploy(
+    const deploy = DeployUtil.makeDeploy(
       new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
@@ -941,12 +1072,84 @@ class CasperServiceClass {
         3600000
       ),
       DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        hexToBytes(tokenHash),
+        hexToBytes(routerHash),
+        'add_liquidity',
+        args
+      ),
+      DeployUtil.standardPayment(gasLimit)
+    );
+
+    console.log('[CasperService.buildAddLiquidityDeploy] Deploy created successfully');
+    return deploy;
+  }
+
+  /**
+   * Build a CEP-18 transfer deploy to send tokens to the Pair contract
+   * @deprecated Use buildAddLiquidityDeploy with Router instead
+   */
+  buildTransferDeploy(
+    tokenHash: string,
+    recipientHash: string,
+    amount: bigint,
+    publicKeyHex: string
+  ): any {
+    console.log('[CasperService.buildTransferDeploy] Called with:');
+    console.log('  tokenHash:', tokenHash);
+    console.log('  recipientHash:', recipientHash);
+    console.log('  amount:', amount?.toString());
+    console.log('  publicKeyHex:', publicKeyHex);
+
+    this.ensureInit();
+
+    // Clean the hashes - remove any prefix
+    const cleanTokenHash = tokenHash?.replace(/^(hash-|entity-contract-)/, '');
+    const cleanRecipientHash = recipientHash?.replace(/^(hash-|entity-contract-)/, '');
+
+    console.log('  cleanTokenHash:', cleanTokenHash);
+    console.log('  cleanRecipientHash:', cleanRecipientHash);
+
+    if (!cleanTokenHash || !cleanRecipientHash || !publicKeyHex) {
+      throw new Error(`Invalid arguments: tokenHash=${cleanTokenHash}, recipientHash=${cleanRecipientHash}, publicKeyHex=${publicKeyHex}`);
+    }
+
+    const publicKey = CLPublicKey.fromHex(publicKeyHex);
+    const gasLimit = EctoplasmConfig.gasLimits.approve; // Similar gas to approve
+    const network = EctoplasmConfig.getNetwork();
+
+    console.log('  gasLimit:', gasLimit);
+    console.log('  chainName:', network.chainName);
+
+    // Recipient is the Pair contract hash
+    const recipientBytes = hexToBytes(cleanRecipientHash);
+    console.log('  recipientBytes length:', recipientBytes?.length);
+
+    const args = RuntimeArgs.fromMap({
+      recipient: CLValueBuilder.key(
+        CLValueBuilder.byteArray(recipientBytes)
+      ),
+      amount: CLValueBuilder.u256(amount.toString())
+    });
+
+    const tokenBytes = hexToBytes(cleanTokenHash);
+    console.log('  tokenBytes length:', tokenBytes?.length);
+
+    const deploy = DeployUtil.makeDeploy(
+      new DeployUtil.DeployParams(
+        publicKey,
+        network.chainName,
+        1,
+        3600000
+      ),
+      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
+        tokenBytes,
         'transfer',
         args
       ),
       DeployUtil.standardPayment(gasLimit)
     );
+
+    console.log('[CasperService.buildTransferDeploy] Deploy created successfully');
+    return deploy;
   }
 
   /**
@@ -956,20 +1159,41 @@ class CasperServiceClass {
     pairHash: string,
     recipientPublicKeyHex: string
   ): any {
+    console.log('[CasperService.buildMintLiquidityDeploy] Called with:');
+    console.log('  pairHash:', pairHash);
+    console.log('  recipientPublicKeyHex:', recipientPublicKeyHex);
+
     this.ensureInit();
+
+    // Clean the pair hash - remove any prefix
+    const cleanPairHash = pairHash?.replace(/^(hash-|entity-contract-)/, '');
+    console.log('  cleanPairHash:', cleanPairHash);
+
+    if (!cleanPairHash || !recipientPublicKeyHex) {
+      throw new Error(`Invalid arguments: pairHash=${cleanPairHash}, recipientPublicKeyHex=${recipientPublicKeyHex}`);
+    }
 
     const publicKey = CLPublicKey.fromHex(recipientPublicKeyHex);
     const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
     const network = EctoplasmConfig.getNetwork();
 
+    console.log('  gasLimit:', gasLimit);
+    console.log('  chainName:', network.chainName);
+
     // The 'to' argument is where LP tokens will be minted
+    const accountHash = publicKey.toAccountHash();
+    console.log('  accountHash length:', accountHash?.length);
+
     const args = RuntimeArgs.fromMap({
       to: CLValueBuilder.key(
-        CLValueBuilder.byteArray(publicKey.toAccountHash())
+        CLValueBuilder.byteArray(accountHash)
       )
     });
 
-    return DeployUtil.makeDeploy(
+    const pairBytes = hexToBytes(cleanPairHash);
+    console.log('  pairBytes length:', pairBytes?.length);
+
+    const deploy = DeployUtil.makeDeploy(
       new DeployUtil.DeployParams(
         publicKey,
         network.chainName,
@@ -977,12 +1201,15 @@ class CasperServiceClass {
         3600000
       ),
       DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        hexToBytes(pairHash),
+        pairBytes,
         'mint',
         args
       ),
       DeployUtil.standardPayment(gasLimit)
     );
+
+    console.log('[CasperService.buildMintLiquidityDeploy] Deploy created successfully');
+    return deploy;
   }
 
   /**
