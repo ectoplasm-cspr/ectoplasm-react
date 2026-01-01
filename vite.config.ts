@@ -7,25 +7,27 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy for Casper mainnet RPC to bypass CORS
-      // Match both /_casper/mainnet and /_casper/mainnet/rpc
-      '^/_casper/mainnet(/.*)?$': {
-        target: 'https://node.mainnet.casper.network',
+      '/_casper/mainnet': {
+        target: 'https://node.mainnet.casper.network/rpc',
         changeOrigin: true,
-        rewrite: () => '/rpc',
+        rewrite: () => '',
         secure: true,
-        headers: {
-          'Content-Type': 'application/json',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Content-Type', 'application/json');
+          });
         },
       },
       // Proxy for Casper testnet RPC
-      // Match both /_casper/testnet and /_casper/testnet/rpc
-      '^/_casper/testnet(/.*)?$': {
-        target: 'https://node.testnet.casper.network',
+      '/_casper/testnet': {
+        target: 'https://node.testnet.casper.network/rpc',
         changeOrigin: true,
-        rewrite: () => '/rpc',
+        rewrite: () => '',
         secure: true,
-        headers: {
-          'Content-Type': 'application/json',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Content-Type', 'application/json');
+          });
         },
       },
       // Proxy for CSPR.cloud API (testnet)

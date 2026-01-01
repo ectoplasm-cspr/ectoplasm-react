@@ -884,46 +884,60 @@ class CasperServiceClass {
 
     this.ensureInit();
 
-    // Check if it's already a Deploy object (from setSignature)
+    // Convert Deploy object to JSON for RPC submission
+    let deployJson: any;
     if (signedDeploy && signedDeploy.hash instanceof Uint8Array && signedDeploy.approvals) {
-      console.log('[CasperService.submitDeploy] Already a signed Deploy object, submitting directly...');
-      const hash = await this.client!.putDeploy(signedDeploy);
-      console.log('[CasperService.submitDeploy] Deploy hash:', hash);
-      return hash;
-    }
-
-    // If signedDeploy is a string, parse it
-    let deployData = signedDeploy;
-    if (typeof signedDeploy === 'string') {
+      console.log('[CasperService.submitDeploy] Converting Deploy object to JSON...');
+      deployJson = DeployUtil.deployToJson(signedDeploy);
+    } else if (typeof signedDeploy === 'string') {
       console.log('[CasperService.submitDeploy] Parsing string deploy...');
       try {
-        deployData = JSON.parse(signedDeploy);
+        deployJson = JSON.parse(signedDeploy);
       } catch (e) {
-        console.log('[CasperService.submitDeploy] Not valid JSON, using as-is');
+        throw new Error(`Failed to parse deploy JSON: ${e}`);
       }
-    }
-
-    // The wallet returns { cancelled: boolean, signature: string, deploy: {...} }
-    let deployJson = deployData;
-    if (deployData.deploy) {
+    } else if (signedDeploy.deploy) {
       console.log('[CasperService.submitDeploy] Extracting deploy from wallet response');
-      deployJson = deployData.deploy;
+      deployJson = signedDeploy;
+    } else {
+      deployJson = signedDeploy;
     }
 
-    // Convert JSON back to Deploy object
-    let deployToSubmit;
-    try {
-      console.log('[CasperService.submitDeploy] Converting from JSON to Deploy...');
-      deployToSubmit = DeployUtil.deployFromJson(deployJson).unwrap();
-    } catch (e) {
-      console.error('[CasperService.submitDeploy] Error converting deploy:', e);
-      throw new Error(`Failed to parse signed deploy: ${e}`);
+    // Extract just the deploy if wrapped
+    const deployData = deployJson.deploy || deployJson;
+
+    console.log('[CasperService.submitDeploy] Submitting via direct RPC...');
+    const network = EctoplasmConfig.getNetwork();
+
+    // Use direct fetch to submit deploy via account_put_deploy RPC method
+    const response = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'account_put_deploy',
+        params: {
+          deploy: deployData
+        }
+      })
+    });
+
+    const result = await response.json();
+    console.log('[CasperService.submitDeploy] RPC response:', result);
+
+    if (result.error) {
+      console.error('[CasperService.submitDeploy] RPC error:', result.error);
+      throw new Error(result.error.message || `RPC error: ${JSON.stringify(result.error)}`);
     }
 
-    console.log('[CasperService.submitDeploy] Submitting deploy...');
-    const hash = await this.client!.putDeploy(deployToSubmit);
-    console.log('[CasperService.submitDeploy] Deploy hash:', hash);
-    return hash;
+    const deployHash = result.result?.deploy_hash;
+    if (!deployHash) {
+      throw new Error('No deploy hash returned from RPC');
+    }
+
+    console.log('[CasperService.submitDeploy] Deploy hash:', deployHash);
+    return deployHash;
   }
 
   async waitForDeploy(deployHash: string, timeout: number = 300000): Promise<DeployResult> {

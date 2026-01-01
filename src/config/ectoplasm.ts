@@ -159,18 +159,19 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
 // Configuration object
 export const EctoplasmConfig = {
   // Network Configuration
-  // Uses Vite proxy in dev (/_casper and /_csprcloud prefixes to avoid CORS)
+  // In development: Uses Vite proxy (/_casper and /_csprcloud prefixes to avoid CORS)
+  // In production: Uses Vercel API routes (/api/casper and /api/csprcloud)
   networks: {
     testnet: {
       name: 'Casper Testnet',
-      rpcUrl: '/_casper/testnet',
-      apiUrl: '/_csprcloud/testnet',
+      rpcUrl: import.meta.env.DEV ? '/_casper/testnet' : '/api/casper/testnet',
+      apiUrl: import.meta.env.DEV ? '/_csprcloud/testnet' : '/api/csprcloud/testnet',
       chainName: 'casper-test',
     },
     mainnet: {
       name: 'Casper Mainnet',
-      rpcUrl: '/_casper/mainnet',
-      apiUrl: '/_csprcloud/mainnet',
+      rpcUrl: import.meta.env.DEV ? '/_casper/mainnet' : '/api/casper/mainnet',
+      apiUrl: import.meta.env.DEV ? '/_csprcloud/mainnet' : '/api/csprcloud/mainnet',
       chainName: 'casper',
     }
   } as Record<NetworkName, NetworkConfig>,
