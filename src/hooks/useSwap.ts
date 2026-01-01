@@ -23,8 +23,8 @@ interface UseSwapResult {
 export function useSwap(): UseSwapResult {
   const { connected, publicKey, refreshBalances } = useWallet();
 
-  const [tokenIn, setTokenIn] = useState('CSPR');
-  const [tokenOut, setTokenOut] = useState('ECTO');
+  const [tokenIn, setTokenIn] = useState('ECTO');
+  const [tokenOut, setTokenOut] = useState('USDC');
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('');
   const [quote, setQuote] = useState<SwapQuote | null>(null);

@@ -16,8 +16,13 @@ export function AddLiquidityForm() {
     setTokenB,
     setAmountA,
     setAmountB,
+    reserveA,
+    reserveB,
+    totalSupply,
+    pairExists,
     addLiquidity,
     loading,
+    txStep,
     error,
   } = useLiquidity();
 
@@ -46,8 +51,34 @@ export function AddLiquidityForm() {
     }
   };
 
+  const isFirstLiquidity = parseFloat(reserveA) === 0 && parseFloat(reserveB) === 0;
+
   return (
     <form onSubmit={handleSubmit} className="lp-form">
+      {/* Pool Info Banner */}
+      {pairExists && (
+        <div className="pool-info-banner">
+          <div className="pool-info-row">
+            <span className="muted tiny">Pool Reserves</span>
+            <span className="tiny">
+              {reserveA} {tokenA} / {reserveB} {tokenB}
+            </span>
+          </div>
+          {isFirstLiquidity && (
+            <div className="pool-info-row">
+              <span className="chip warning tiny">First Liquidity Provider</span>
+              <span className="muted tiny">You set the initial price</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!pairExists && (
+        <div className="pool-info-banner warning">
+          <span className="muted tiny">Pair not found. Contact admin to create it.</span>
+        </div>
+      )}
+
       {/* Token A Input */}
       <div className="token-row">
         <div className="token-field">
@@ -61,11 +92,13 @@ export function AddLiquidityForm() {
               step="any"
               min="0"
               className="token-amount-input"
+              disabled={loading}
             />
             <select
               value={tokenA}
               onChange={(e) => setTokenA(e.target.value)}
               className="token-select"
+              disabled={loading}
             >
               {tokenSymbols.map((sym) => (
                 <option key={sym} value={sym} disabled={sym === tokenB}>
@@ -82,6 +115,7 @@ export function AddLiquidityForm() {
                 onClick={handleMaxA}
                 className="btn ghost tiny"
                 style={{ marginLeft: '4px', padding: '2px 4px' }}
+                disabled={loading}
               >
                 MAX
               </button>
@@ -108,11 +142,13 @@ export function AddLiquidityForm() {
               step="any"
               min="0"
               className="token-amount-input"
+              disabled={loading || (!isFirstLiquidity && pairExists)}
             />
             <select
               value={tokenB}
               onChange={(e) => setTokenB(e.target.value)}
               className="token-select"
+              disabled={loading}
             >
               {tokenSymbols.map((sym) => (
                 <option key={sym} value={sym} disabled={sym === tokenA}>
@@ -124,14 +160,17 @@ export function AddLiquidityForm() {
           {connected && (
             <span className="balance muted tiny">
               Balance: {balanceB}
-              <button
-                type="button"
-                onClick={handleMaxB}
-                className="btn ghost tiny"
-                style={{ marginLeft: '4px', padding: '2px 4px' }}
-              >
-                MAX
-              </button>
+              {isFirstLiquidity && (
+                <button
+                  type="button"
+                  onClick={handleMaxB}
+                  className="btn ghost tiny"
+                  style={{ marginLeft: '4px', padding: '2px 4px' }}
+                  disabled={loading}
+                >
+                  MAX
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -147,7 +186,23 @@ export function AddLiquidityForm() {
           <span className="muted tiny">LP Tokens Received</span>
           <span>{lpTokensReceived}</span>
         </div>
+        {totalSupply !== '0' && (
+          <div className="lp-summary-row">
+            <span className="muted tiny">Total LP Supply</span>
+            <span>{totalSupply}</span>
+          </div>
+        )}
       </div>
+
+      {/* Transaction Progress */}
+      {txStep && (
+        <div className="tx-progress">
+          <div className="tx-step active">
+            <span className="spinner"></span>
+            <span>{txStep}</span>
+          </div>
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
@@ -160,14 +215,23 @@ export function AddLiquidityForm() {
       <button
         type="submit"
         className="btn primary full"
-        disabled={connected && loading}
+        disabled={(connected && loading) || !pairExists}
       >
         {!connected
           ? 'Connect Wallet'
           : loading
-          ? 'Processing...'
+          ? txStep || 'Processing...'
+          : !pairExists
+          ? 'Pair Not Available'
           : 'Add Liquidity'}
       </button>
+
+      {/* Info Text */}
+      {connected && pairExists && !loading && (
+        <p className="muted tiny" style={{ marginTop: '8px', textAlign: 'center' }}>
+          Adding liquidity requires 3 transactions: Transfer {tokenA}, Transfer {tokenB}, then Mint LP tokens.
+        </p>
+      )}
     </form>
   );
 }

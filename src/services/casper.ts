@@ -644,6 +644,218 @@ class CasperServiceClass {
 
     return { success: false, deployHash, error: 'Timeout waiting for deploy' };
   }
+
+  // ============================================
+  // Liquidity Operations
+  // ============================================
+
+  /**
+   * Build a CEP-18 transfer deploy to send tokens to the Pair contract
+   */
+  buildTransferDeploy(
+    tokenHash: string,
+    recipientHash: string,
+    amount: bigint,
+    publicKeyHex: string
+  ): any {
+    this.ensureInit();
+
+    const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+    const gasLimit = EctoplasmConfig.gasLimits.approve; // Similar gas to approve
+    const network = EctoplasmConfig.getNetwork();
+
+    // Recipient is the Pair contract hash
+    const args = RuntimeArgsClass.fromMap({
+      recipient: CLValueBuilderClass.key(
+        CLValueBuilderClass.byteArray(hexToBytes(recipientHash))
+      ),
+      amount: CLValueBuilderClass.u256(amount.toString())
+    });
+
+    return DeployUtilClass.makeDeploy(
+      new DeployUtilClass.DeployParams(
+        publicKey,
+        network.chainName,
+        1,
+        3600000
+      ),
+      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+        hexToBytes(tokenHash),
+        'transfer',
+        args
+      ),
+      DeployUtilClass.standardPayment(gasLimit)
+    );
+  }
+
+  /**
+   * Build a mint deploy to call Pair.mint() and receive LP tokens
+   */
+  buildMintLiquidityDeploy(
+    pairHash: string,
+    recipientPublicKeyHex: string
+  ): any {
+    this.ensureInit();
+
+    const publicKey = CLPublicKeyClass.fromHex(recipientPublicKeyHex);
+    const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
+    const network = EctoplasmConfig.getNetwork();
+
+    // The 'to' argument is where LP tokens will be minted
+    const args = RuntimeArgsClass.fromMap({
+      to: CLValueBuilderClass.key(
+        CLValueBuilderClass.byteArray(publicKey.toAccountHash())
+      )
+    });
+
+    return DeployUtilClass.makeDeploy(
+      new DeployUtilClass.DeployParams(
+        publicKey,
+        network.chainName,
+        1,
+        3600000
+      ),
+      DeployUtilClass.ExecutableDeployItem.newStoredContractByHash(
+        hexToBytes(pairHash),
+        'mint',
+        args
+      ),
+      DeployUtilClass.standardPayment(gasLimit)
+    );
+  }
+
+  /**
+   * Get LP token balance for a user in a specific pair
+   */
+  async getLPTokenBalance(pairHash: string, publicKeyHex: string): Promise<BalanceResult> {
+    this.ensureInit();
+
+    try {
+      const publicKey = CLPublicKeyClass.fromHex(publicKeyHex);
+      const accountHash = publicKey.toAccountHashStr();
+      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const balanceKey = accountHash.replace('account-hash-', '');
+      const contractHash = pairHash.replace('hash-', '');
+
+      // LP tokens are stored in the pair's balances dictionary
+      const result = await this.client.nodeClient.getDictionaryItemByName(
+        stateRootHash,
+        contractHash,
+        'balances',
+        balanceKey
+      );
+
+      const balance = BigInt(result.CLValue?.data?.toString() || '0');
+
+      return {
+        raw: balance,
+        formatted: formatTokenAmount(balance.toString(), 18), // LP tokens have 18 decimals
+        decimals: 18
+      };
+    } catch (error: any) {
+      if (error.message?.includes('ValueNotFound') ||
+          error.message?.includes('Failed to find') ||
+          error.code === -32003) {
+        return { raw: BigInt(0), formatted: '0', decimals: 18 };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get total supply of LP tokens for a pair
+   */
+  async getLPTokenTotalSupply(pairHash: string): Promise<bigint> {
+    this.ensureInit();
+
+    try {
+      const stateRootHash = await this.client.nodeClient.getStateRootHash();
+      const totalSupply = await this.queryContractNamedKey(pairHash, 'total_supply', stateRootHash);
+      return BigInt(totalSupply || '0');
+    } catch (error) {
+      console.error('Error fetching LP total supply:', error);
+      return BigInt(0);
+    }
+  }
+
+  /**
+   * Calculate optimal amounts for adding liquidity based on current reserves
+   */
+  calculateOptimalLiquidity(
+    amountADesired: bigint,
+    amountBDesired: bigint,
+    reserveA: bigint,
+    reserveB: bigint
+  ): { amountA: bigint; amountB: bigint } {
+    // If no reserves, use desired amounts directly
+    if (reserveA === BigInt(0) && reserveB === BigInt(0)) {
+      return { amountA: amountADesired, amountB: amountBDesired };
+    }
+
+    // Calculate optimal amountB for given amountA
+    const amountBOptimal = (amountADesired * reserveB) / reserveA;
+
+    if (amountBOptimal <= amountBDesired) {
+      return { amountA: amountADesired, amountB: amountBOptimal };
+    }
+
+    // Calculate optimal amountA for given amountB
+    const amountAOptimal = (amountBDesired * reserveA) / reserveB;
+    return { amountA: amountAOptimal, amountB: amountBDesired };
+  }
+
+  /**
+   * Estimate LP tokens to receive for given liquidity amounts
+   */
+  estimateLPTokens(
+    amountA: bigint,
+    amountB: bigint,
+    reserveA: bigint,
+    reserveB: bigint,
+    totalSupply: bigint
+  ): bigint {
+    if (totalSupply === BigInt(0)) {
+      // First liquidity: sqrt(amountA * amountB) - MINIMUM_LIQUIDITY
+      const product = amountA * amountB;
+      const sqrt = this.bigIntSqrt(product);
+      const MINIMUM_LIQUIDITY = BigInt(1000);
+      return sqrt > MINIMUM_LIQUIDITY ? sqrt - MINIMUM_LIQUIDITY : BigInt(0);
+    }
+
+    // Subsequent liquidity: min(amountA * totalSupply / reserveA, amountB * totalSupply / reserveB)
+    const liquidityA = (amountA * totalSupply) / reserveA;
+    const liquidityB = (amountB * totalSupply) / reserveB;
+    return liquidityA < liquidityB ? liquidityA : liquidityB;
+  }
+
+  /**
+   * Calculate pool share percentage
+   */
+  calculatePoolShare(lpTokens: bigint, totalSupply: bigint): number {
+    if (totalSupply === BigInt(0)) {
+      return 100; // First LP gets 100% of the pool
+    }
+    const newTotalSupply = totalSupply + lpTokens;
+    return Number((lpTokens * BigInt(10000)) / newTotalSupply) / 100;
+  }
+
+  /**
+   * Integer square root for bigint
+   */
+  private bigIntSqrt(n: bigint): bigint {
+    if (n < BigInt(0)) throw new Error('Square root of negative number');
+    if (n < BigInt(2)) return n;
+
+    let x = n;
+    let y = (x + BigInt(1)) / BigInt(2);
+
+    while (y < x) {
+      x = y;
+      y = (x + n / x) / BigInt(2);
+    }
+
+    return x;
+  }
 }
 
 // Export singleton instance

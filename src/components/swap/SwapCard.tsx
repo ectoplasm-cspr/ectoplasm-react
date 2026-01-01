@@ -159,8 +159,10 @@ export function SwapCard() {
                 onChange={(e) => setTokenIn(e.target.value)}
                 aria-label="Sell token"
               >
-                <option value="CSPR">CSPR</option>
                 <option value="ECTO">ECTO</option>
+                <option value="USDC">USDC</option>
+                <option value="WETH">WETH</option>
+                <option value="WBTC">WBTC</option>
               </select>
             </div>
           </div>
@@ -199,8 +201,10 @@ export function SwapCard() {
                 onChange={(e) => setTokenOut(e.target.value)}
                 aria-label="Buy token"
               >
+                <option value="USDC">USDC</option>
                 <option value="ECTO">ECTO</option>
-                <option value="CSPR">CSPR</option>
+                <option value="WETH">WETH</option>
+                <option value="WBTC">WBTC</option>
               </select>
             </div>
           </div>
