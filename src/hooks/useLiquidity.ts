@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { DeployUtil, CLPublicKey } from 'casper-js-sdk';
+import { DeployUtil, CLPublicKey } from 'casper-js-sdk/dist/lib';
 import { useWallet } from '../contexts/WalletContext';
 import { CasperService } from '../services/casper';
 import { EctoplasmConfig } from '../config/ectoplasm';

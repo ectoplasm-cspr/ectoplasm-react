@@ -953,7 +953,7 @@ class CasperServiceClass {
       console.log(`[CasperService.waitForDeploy] Poll #${pollCount} for deploy ${deployHash.substring(0, 16)}...`);
 
       try {
-        const result = await this.client!.nodeClient.getDeployInfo(deployHash);
+        const result = await this.client!.nodeClient.getDeployInfo(deployHash) as any;
         console.log('[CasperService.waitForDeploy] getDeployInfo result:', result);
 
         // Handle Casper 2.0 format (execution_info)
