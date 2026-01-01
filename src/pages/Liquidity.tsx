@@ -92,7 +92,7 @@ const DEMO_POSITIONS = [
   },
 ];
 
-type ModalType = 'add' | 'remove' | null;
+type ModalType = 'add' | 'view' | null;
 
 export function Liquidity() {
   const { connected } = useWallet();
@@ -139,6 +139,11 @@ export function Liquidity() {
     return `$${(tvl / 1000).toFixed(0)}K`;
   };
 
+  const openViewPool = (pool: typeof STAKING_POOLS[0]) => {
+    setSelectedPool(pool);
+    setModalType('view');
+  };
+
   const openAddLiquidity = (pool: typeof STAKING_POOLS[0]) => {
     setSelectedPool(pool);
     setModalType('add');
@@ -147,6 +152,16 @@ export function Liquidity() {
   const closeModal = () => {
     setModalType(null);
     setSelectedPool(null);
+  };
+
+  // Calculate liquidity provided to DEX (simulated as ~78% of TVL)
+  const getLiquidityProvided = (tvl: number) => {
+    const utilization = 0.78;
+    const provided = tvl * utilization;
+    return {
+      amount: provided >= 1000000 ? `$${(provided / 1000000).toFixed(1)}M` : `$${(provided / 1000).toFixed(0)}K`,
+      percent: Math.round(utilization * 100)
+    };
   };
 
   // Use real positions if connected, otherwise show demo
@@ -350,12 +365,20 @@ export function Liquidity() {
                   <div className="apr">{pool.apr}%</div>
                 </div>
                 <div className="col action" role="cell">
-                  <button
-                    className="btn primary small"
-                    onClick={() => openAddLiquidity(pool)}
-                  >
-                    View Pool
-                  </button>
+                  <div className="action-buttons">
+                    <button
+                      className="btn ghost small"
+                      onClick={() => openViewPool(pool)}
+                    >
+                      View Pool
+                    </button>
+                    <button
+                      className="btn primary small"
+                      onClick={() => openAddLiquidity(pool)}
+                    >
+                      Add
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -368,6 +391,58 @@ export function Liquidity() {
           </div>
         </div>
       </section>
+
+      {/* View Pool Modal */}
+      {modalType === 'view' && selectedPool && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content modal-view-pool" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{selectedPool.name}</h3>
+              <button className="btn ghost tiny" onClick={closeModal}>✕</button>
+            </div>
+            <div className="pool-info-grid">
+              <div className="pool-info-item">
+                <span className="muted tiny">Total Value Locked</span>
+                <span className="pool-info-value">{formatTVL(selectedPool.tvl)}</span>
+              </div>
+              <div className="pool-info-item">
+                <span className="muted tiny">APR</span>
+                <span className="pool-info-value apr-value">{selectedPool.apr}%</span>
+              </div>
+              <div className="pool-info-item">
+                <span className="muted tiny">Min. Stake</span>
+                <span className="pool-info-value">{selectedPool.minStake}</span>
+              </div>
+              <div className="pool-info-item">
+                <span className="muted tiny">LST Token</span>
+                <span className="pool-info-value">{selectedPool.token}</span>
+              </div>
+            </div>
+            <div className="pool-info-section">
+              <span className="muted tiny">Liquidity Provided to DEX</span>
+              <span className="pool-info-value">
+                {getLiquidityProvided(selectedPool.tvl).amount} ({getLiquidityProvided(selectedPool.tvl).percent}% utilized)
+              </span>
+            </div>
+            <div className="pool-info-section">
+              <span className="muted tiny">Pool Features</span>
+              <div className="pool-features">
+                <span className="pill subtle">Auto-compound</span>
+                <span className="pill subtle">No lock</span>
+                <span className="pill subtle active">Live</span>
+              </div>
+            </div>
+            <button
+              className="btn primary full"
+              onClick={() => {
+                setModalType('add');
+              }}
+            >
+              Add Liquidity
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Add Liquidity Modal */}
       {modalType === 'add' && selectedPool && (
