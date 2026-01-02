@@ -56,7 +56,7 @@ const ODRA_CONTRACTS: ContractsConfig = {
     "hash-b6a1031ce1c96eeecfea95a6c28d7135ba33139e02e5ab4a0387b328b0eeddb4",
   pairs: {
     "ECTO/USDC":
-      "hash-58e93450c5188c6d9caf9ce3e9938cd04d011203290ea688db858621ed148aa3",
+      "58e93450c5188c6d9caf9ce3e9938cd04d011203290ea688db858621ed148aa3",
     "WETH/USDC":
       "hash-433c92970b5f9073222f9e50739af8092b1e96345e6eb2a33e511308495f3f7c",
     "WBTC/USDC":
