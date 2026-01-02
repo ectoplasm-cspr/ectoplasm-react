@@ -35,7 +35,8 @@ export function SwapCard() {
       return;
     }
 
-    const hash = await executeSwap();
+    const parsedSlippage = Number(slippage);
+    const hash = await executeSwap(Number.isFinite(parsedSlippage) ? parsedSlippage : undefined);
     if (hash) {
       alert(`Swap submitted! Deploy hash: ${hash}`);
     }
@@ -159,6 +160,7 @@ export function SwapCard() {
                 onChange={(e) => setTokenIn(e.target.value)}
                 aria-label="Sell token"
               >
+                <option value="WCSPR">WCSPR</option>
                 <option value="ECTO">ECTO</option>
                 <option value="USDC">USDC</option>
                 <option value="WETH">WETH</option>
@@ -201,6 +203,7 @@ export function SwapCard() {
                 onChange={(e) => setTokenOut(e.target.value)}
                 aria-label="Buy token"
               >
+                <option value="WCSPR">WCSPR</option>
                 <option value="USDC">USDC</option>
                 <option value="ECTO">ECTO</option>
                 <option value="WETH">WETH</option>

@@ -35,6 +35,9 @@ export interface SwapQuote {
   priceImpact: string;
   rate: string;
   path?: string[];
+  // Contract hashes used for ERC-20/CEP-18 approvals and allowance checks.
+  // In Odra mode, Router/Factory operate on package hashes (Odra Address), but token approvals still target the token contract hash.
+  pathContracts?: string[];
   reserves?: {
     reserveA: bigint;
     reserveB: bigint;
@@ -58,6 +61,8 @@ class CasperServiceClass {
   private initialized: boolean = false;
   private sdkAvailable: boolean = false;
   private initError: string | null = null;
+
+  private pairAddressCache: Map<string, string | null> = new Map();
 
   normalizePublicKeyHex(value: string): string {
     const hex = value.replace(/^0x/i, '').trim();
@@ -639,9 +644,35 @@ class CasperServiceClass {
   async getPairAddress(tokenA: string, tokenB: string): Promise<string | null> {
     console.log('[CasperService.getPairAddress] Called with tokenA:', tokenA, 'tokenB:', tokenB);
 
+    const cacheKey = this.makePairCacheKey(tokenA, tokenB);
+    if (this.pairAddressCache.has(cacheKey)) {
+      const cached = this.pairAddressCache.get(cacheKey)!;
+      console.log('[CasperService.getPairAddress] cache hit:', { cacheKey, cached });
+      return cached;
+    }
+
+    // Configured pairs are keyed by token symbols; resolve from either contract-hash or package-hash inputs.
     const configuredPair = EctoplasmConfig.getConfiguredPairAddress(tokenA, tokenB);
     console.log('[CasperService.getPairAddress] configuredPair from config:', configuredPair);
-    if (configuredPair) return configuredPair;
+    if (configuredPair) {
+      this.pairAddressCache.set(cacheKey, configuredPair);
+      return configuredPair;
+    }
+
+    if (EctoplasmConfig.contractVersion === 'odra') {
+      const tokenAConfig = EctoplasmConfig.getTokenByPackageHash(tokenA) || EctoplasmConfig.getTokenByHash(tokenA);
+      const tokenBConfig = EctoplasmConfig.getTokenByPackageHash(tokenB) || EctoplasmConfig.getTokenByHash(tokenB);
+      if (tokenAConfig && tokenBConfig) {
+        const key1 = `${tokenAConfig.symbol}/${tokenBConfig.symbol}`;
+        const key2 = `${tokenBConfig.symbol}/${tokenAConfig.symbol}`;
+        const pairAddress = EctoplasmConfig.contracts.pairs[key1] || EctoplasmConfig.contracts.pairs[key2] || null;
+        console.log('[CasperService.getPairAddress] configuredPair via symbols:', { key1, key2, pairAddress });
+        if (pairAddress) {
+          this.pairAddressCache.set(cacheKey, pairAddress);
+          return pairAddress;
+        }
+      }
+    }
 
     this.ensureInit();
 
@@ -651,39 +682,71 @@ class CasperServiceClass {
 
       const stateRootHash = await this.getStateRootHash();
       const [token0, token1] = this.sortTokens(tokenA, tokenB);
-      const pairKey = `${token0.replace('hash-', '')}_${token1.replace('hash-', '')}`;
-      console.log('[CasperService.getPairAddress] pairKey:', pairKey);
+      const token0Hex = token0.replace(/^(hash-|entity-contract-)/, '');
+      const token1Hex = token1.replace(/^(hash-|entity-contract-)/, '');
 
-      const response = await fetch(EctoplasmConfig.getNetwork().rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'state_get_dictionary_item',
-          params: {
-            state_root_hash: stateRootHash,
-            dictionary_identifier: {
-              ContractNamedKey: {
-                key: factoryHash.startsWith('hash-') ? factoryHash : `hash-${factoryHash}`,
-                dictionary_name: 'pairs',
-                dictionary_item_key: pairKey
+      // In Odra, all contract state is stored in a single 'state' dictionary
+      // Dictionary keys are computed as blake2b(field_index ++ key_bytes)
+      const isOdra = EctoplasmConfig.contractVersion === 'odra';
+      const dictionaryName = isOdra ? 'state' : 'pairs';
+      const candidates = isOdra
+        ? this.getOdraPairKeyCandidates(token0Hex, token1Hex)
+        : [`${token0Hex}_${token1Hex}`];
+
+      console.log('[CasperService.getPairAddress] Query params:', {
+        isOdra,
+        dictionaryName,
+        token0Hex,
+        token1Hex,
+        candidatesCount: candidates.length
+      });
+
+      for (const pairKey of candidates) {
+        const response = await fetch(EctoplasmConfig.getNetwork().rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'state_get_dictionary_item',
+            params: {
+              state_root_hash: stateRootHash,
+              dictionary_identifier: {
+                ContractNamedKey: {
+                  key: factoryHash.startsWith('hash-') ? factoryHash : `hash-${factoryHash}`,
+                  dictionary_name: dictionaryName,
+                  dictionary_item_key: pairKey
+                }
               }
             }
-          }
-        })
-      });
-      const json = await response.json();
+          })
+        });
+        const json = await response.json();
+        
+        console.log('[CasperService.getPairAddress] Query result:', {
+          pairKey: pairKey.substring(0, 16) + '...',
+          hasError: !!json?.error,
+          error: json?.error?.message,
+          hasValue: !!json?.result?.stored_value
+        });
+        
+        if (json?.error) continue;
 
-      const parsed = json?.result?.stored_value?.CLValue?.parsed;
-      if (typeof parsed === 'string') {
-        console.log('[CasperService.getPairAddress] result:', parsed);
-        return parsed;
+        const parsed = json?.result?.stored_value?.CLValue?.parsed;
+        if (typeof parsed === 'string' && parsed.length) {
+          console.log('[CasperService.getPairAddress] ✓ Found pair:', { pairKey, parsed });
+          this.pairAddressCache.set(cacheKey, parsed);
+          return parsed;
+        }
       }
+
+      console.log('[CasperService.getPairAddress] ✗ Pair not found after checking all candidates');
+      this.pairAddressCache.set(cacheKey, null);
       return null;
     } catch (error: any) {
       console.log('[CasperService.getPairAddress] Error:', error.message);
       if (error.message?.includes('ValueNotFound') || error.message?.includes('Failed to find')) {
+        this.pairAddressCache.set(cacheKey, null);
         return null;
       }
       throw error;
@@ -804,6 +867,81 @@ class CasperServiceClass {
     return hashA < hashB ? [tokenA, tokenB] : [tokenB, tokenA];
   }
 
+  private makePairCacheKey(tokenA: string, tokenB: string): string {
+    const [t0, t1] = this.sortTokens(tokenA, tokenB);
+    return `${t0.toLowerCase()}::${t1.toLowerCase()}`;
+  }
+
+  private generateOdraMappingKey(index: number, payload: Uint8Array, littleEndian: boolean): string {
+    const indexBytes = new Uint8Array(4);
+    new DataView(indexBytes.buffer).setUint32(0, index, littleEndian);
+    const combined = new Uint8Array(indexBytes.length + payload.length);
+    combined.set(indexBytes);
+    combined.set(payload, indexBytes.length);
+    return blake2bHex(combined, undefined, 32);
+  }
+
+  private odraAddressBytes(hashHex: string, tag: number): Uint8Array {
+    const clean = hashHex.replace(/^(hash-|entity-contract-)/, '').replace(/^0x/i, '');
+    const hex = clean.length === 64 ? clean : clean.padStart(64, '0');
+    const out = new Uint8Array(33);
+    out[0] = tag;
+    out.set(hexToBytes(hex), 1);
+    return out;
+  }
+
+  private getOdraPairKeyCandidates(token0Hex: string, token1Hex: string): string[] {
+    const candidates: string[] = [];
+    
+    // Odra Mapping key = blake2b(index_bytes[4] ++ key.to_bytes())
+    // For Factory contract, 'pairs' is the 4th field (index 3):
+    // 0: fee_to, 1: fee_to_setter, 2: pair_factory, 3: pairs
+    // The tuple (Address, Address) serializes as:
+    // - First Address bytes (33 bytes: 1 tag byte + 32 hash bytes)
+    // - Second Address bytes (33 bytes: 1 tag byte + 32 hash bytes)
+    
+    const pairsFieldIndex = 3;
+    
+    // Odra uses big-endian for index
+    const indexBytes = new Uint8Array(4);
+    new DataView(indexBytes.buffer).setUint32(0, pairsFieldIndex, false); // big-endian
+    
+    // Casper Address serialization:
+    // Tag byte: 0 for Account, 1 for Contract (package hash)
+    // Token addresses are contract package hashes, so tag = 1
+    const contractTag = 1;
+    
+    const addr0 = new Uint8Array(33);
+    addr0[0] = contractTag;
+    addr0.set(hexToBytes(token0Hex.padStart(64, '0')), 1);
+    
+    const addr1 = new Uint8Array(33);
+    addr1[0] = contractTag;
+    addr1.set(hexToBytes(token1Hex.padStart(64, '0')), 1);
+    
+    // Combine: index_bytes ++ addr0 ++ addr1
+    const combined = new Uint8Array(4 + 33 + 33);
+    combined.set(indexBytes, 0);
+    combined.set(addr0, 4);
+    combined.set(addr1, 4 + 33);
+    
+    const hashed = blake2bHex(combined, undefined, 32);
+    candidates.push(hashed);
+    
+    console.log('[getOdraPairKeyCandidates] Generated key:', {
+      pairsFieldIndex,
+      token0Hex,
+      token1Hex,
+      indexBytesHex: Array.from(indexBytes).map(b => b.toString(16).padStart(2, '0')).join(''),
+      addr0Hex: Array.from(addr0).map(b => b.toString(16).padStart(2, '0')).join(''),
+      addr1Hex: Array.from(addr1).map(b => b.toString(16).padStart(2, '0')).join(''),
+      combinedHex: Array.from(combined).map(b => b.toString(16).padStart(2, '0')).join(''),
+      hashedKey: hashed
+    });
+    
+    return candidates;
+  }
+
   // ============================================
   // AMM Calculations
   // ============================================
@@ -860,13 +998,34 @@ class CasperServiceClass {
       return this.getDemoQuote(tokenInSymbol, tokenOutSymbol, amountIn);
     }
 
+    // Odra contracts use package-hash "addresses" internally for Router/Factory.
+    // Without package hashes we cannot discover pairs/reserves on-chain.
+    const isOdra = EctoplasmConfig.contractVersion === 'odra';
+    if (isOdra && (!tokenIn.packageHash || !tokenOut.packageHash)) {
+      return {
+        valid: false,
+        error: `Missing package hash for ${tokenInSymbol} or ${tokenOutSymbol}`,
+        amountIn: '0',
+        amountInRaw: BigInt(0),
+        amountOut: '0',
+        amountOutRaw: BigInt(0),
+        priceImpact: '0',
+        rate: '0'
+      };
+    }
+
     if (!this.isAvailable()) {
       return this.getDemoQuote(tokenInSymbol, tokenOutSymbol, amountIn);
     }
 
     try {
       const amountInRaw = BigInt(parseTokenAmount(amountIn, tokenIn.decimals));
-      const reserves = await this.getPairReserves(tokenIn.hash, tokenOut.hash);
+
+      // Pair discovery/reserves: Odra uses package hashes; non-Odra uses contract hashes.
+      const reserves = await this.getPairReserves(
+        isOdra ? tokenIn.packageHash! : tokenIn.hash,
+        isOdra ? tokenOut.packageHash! : tokenOut.hash
+      );
 
       if (!reserves.exists) {
         return {
@@ -906,7 +1065,10 @@ class CasperServiceClass {
         minReceivedRaw,
         priceImpact: Math.max(0, priceImpact).toFixed(2),
         rate: rate.toFixed(6),
-        path: [tokenIn.hash, tokenOut.hash],
+        // Router path uses Odra Address values (package hashes) in Odra mode.
+        path: isOdra ? [tokenIn.packageHash!, tokenOut.packageHash!] : [tokenIn.hash, tokenOut.hash],
+        // Approvals/allowances must target the token contract hashes.
+        pathContracts: [tokenIn.hash, tokenOut.hash],
         reserves
       };
     } catch (error: any) {

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { Deploy } from 'casper-js-sdk';
 import { useWallet } from '../contexts/WalletContext';
 import { CasperService, SwapQuote } from '../services/casper';
 import { EctoplasmConfig } from '../config/ectoplasm';
@@ -16,15 +17,15 @@ interface UseSwapResult {
   setTokenOut: (symbol: string) => void;
   setAmountIn: (amount: string) => void;
   switchTokens: () => void;
-  executeSwap: () => Promise<string | null>;
+  executeSwap: (slippagePercent?: number) => Promise<string | null>;
   refreshQuote: () => Promise<void>;
 }
 
 export function useSwap(): UseSwapResult {
   const { connected, publicKey, refreshBalances } = useWallet();
 
-  const [tokenIn, setTokenIn] = useState('ECTO');
-  const [tokenOut, setTokenOut] = useState('USDC');
+  const [tokenIn, setTokenIn] = useState('WCSPR');
+  const [tokenOut, setTokenOut] = useState('ECTO');
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('');
   const [quote, setQuote] = useState<SwapQuote | null>(null);
@@ -75,7 +76,7 @@ export function useSwap(): UseSwapResult {
     setAmountOut(amountIn);
   }, [tokenIn, tokenOut, amountIn, amountOut]);
 
-  const executeSwap = useCallback(async (): Promise<string | null> => {
+  const executeSwap = useCallback(async (slippagePercent: number = EctoplasmConfig.swap.defaultSlippage): Promise<string | null> => {
     if (!connected || !publicKey) {
       setError('Please connect your wallet');
       return null;
@@ -95,37 +96,36 @@ export function useSwap(): UseSwapResult {
     setError(null);
 
     try {
+      const signerPublicKey = CasperService.normalizePublicKeyHex(publicKey);
+
       // Check allowance and approve if needed
-      if (quote.path && quote.path[0]) {
+      const tokenInContractHash = quote.pathContracts?.[0] ?? quote.path?.[0];
+      if (tokenInContractHash) {
         const hasAllowance = await CasperService.checkAllowance(
-          quote.path[0],
+          tokenInContractHash,
           publicKey,
           quote.amountInRaw
         );
 
         if (!hasAllowance) {
-          // Build and sign approval deploy
-          const approveDeploy = CasperService.buildApproveDeploy(
-            quote.path[0],
-            quote.amountInRaw,
-            publicKey
-          );
-
-          // Sign with wallet (this will prompt user)
           const w = window as any;
-          let signedApprove;
-
-          if (w.CasperWalletProvider) {
-            const wallet = w.CasperWalletProvider();
-            signedApprove = await wallet.sign(
-              JSON.stringify(approveDeploy),
-              publicKey
-            );
-          } else {
+          if (!w.CasperWalletProvider) {
             throw new Error('No wallet available for signing');
           }
+          const wallet = w.CasperWalletProvider();
 
-          // Submit approval
+          // Build and sign approval deploy
+          const approveDeploy = CasperService.buildApproveDeploy(
+            tokenInContractHash,
+            quote.amountInRaw,
+            signerPublicKey
+          );
+
+          const approveJson = Deploy.toJSON(approveDeploy);
+          const walletResponse = await wallet.sign(JSON.stringify(approveJson), signerPublicKey);
+          const signedApprove = CasperService.deployFromWalletResponse(approveDeploy, walletResponse, signerPublicKey);
+
+          // Submit + wait approval
           const approveHash = await CasperService.submitDeploy(signedApprove);
           console.log('Approval submitted:', approveHash);
 
@@ -138,25 +138,25 @@ export function useSwap(): UseSwapResult {
       }
 
       // Build swap deploy
-      const swapDeploy = CasperService.buildSwapDeploy(quote, publicKey);
-
-      // Sign with wallet
       const w = window as any;
-      let signedSwap;
-
-      if (w.CasperWalletProvider) {
-        const wallet = w.CasperWalletProvider();
-        signedSwap = await wallet.sign(
-          JSON.stringify(swapDeploy),
-          publicKey
-        );
-      } else {
+      if (!w.CasperWalletProvider) {
         throw new Error('No wallet available for signing');
       }
+      const wallet = w.CasperWalletProvider();
 
-      // Submit swap
+      const swapDeploy = CasperService.buildSwapDeploy(quote, signerPublicKey, slippagePercent);
+      const swapJson = Deploy.toJSON(swapDeploy);
+      const walletResponse = await wallet.sign(JSON.stringify(swapJson), signerPublicKey);
+      const signedSwap = CasperService.deployFromWalletResponse(swapDeploy, walletResponse, signerPublicKey);
+
+      // Submit + wait swap
       const swapHash = await CasperService.submitDeploy(signedSwap);
       console.log('Swap submitted:', swapHash);
+
+      const swapResult = await CasperService.waitForDeploy(swapHash);
+      if (!swapResult.success) {
+        throw new Error(`Swap failed: ${swapResult.error}`);
+      }
 
       // Refresh balances
       await refreshBalances();
