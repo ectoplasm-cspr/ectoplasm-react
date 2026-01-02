@@ -7,12 +7,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "resolve:contract-hashes": "node scripts/resolve-contract-hashes.mjs --in .env --out .env.resolved",
     "preview": "vite preview"
   },
   "dependencies": {
     "@make-software/csprclick-core-client": "^1.11.0",
     "@make-software/csprclick-ui": "^2.0.0-beta.6",
-    "casper-js-sdk": "^2.15.2",
+    "blakejs": "^1.2.1",
+    "casper-js-sdk": "^5.0.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.11.0"

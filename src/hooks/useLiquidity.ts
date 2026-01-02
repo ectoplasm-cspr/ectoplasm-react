@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { DeployUtil, CLPublicKey } from 'casper-js-sdk/dist/lib';
+import { Deploy } from 'casper-js-sdk';
 import { useWallet } from '../contexts/WalletContext';
 import { CasperService } from '../services/casper';
 import { EctoplasmConfig } from '../config/ectoplasm';
@@ -371,6 +371,8 @@ export function useLiquidity(): UseLiquidityResult {
       return null;
     }
 
+    const signerPublicKey = CasperService.normalizePublicKeyHex(publicKey);
+
     console.log('[addLiquidity] amountA:', amountA, 'amountB:', amountB);
     if (!amountA || !amountB || parseFloat(amountA) <= 0 || parseFloat(amountB) <= 0) {
       setError('Please enter valid amounts');
@@ -433,22 +435,18 @@ export function useLiquidity(): UseLiquidityResult {
         const approveADeploy = CasperService.buildApproveDeploy(
           tokenAConfig.hash,
           amountARaw,
-          publicKey
+          signerPublicKey
         );
 
-        const approveAJson = DeployUtil.deployToJson(approveADeploy);
+        const approveAJson = Deploy.toJSON(approveADeploy);
         console.log('[addLiquidity] Requesting wallet signature for approve A...');
-        const walletResponseA = await wallet.sign(JSON.stringify(approveAJson), publicKey);
+        const walletResponseA = await wallet.sign(JSON.stringify(approveAJson), signerPublicKey);
 
         if (walletResponseA.cancelled) {
           throw new Error('User cancelled the transaction');
         }
 
-        const signedApproveA = DeployUtil.setSignature(
-          approveADeploy,
-          walletResponseA.signature,
-          CLPublicKey.fromHex(publicKey)
-        );
+        const signedApproveA = CasperService.deployFromWalletResponse(approveADeploy, walletResponseA, signerPublicKey);
 
         const approveAHash = await CasperService.submitDeploy(signedApproveA);
         console.log('[addLiquidity] approveAHash:', approveAHash);
@@ -473,22 +471,18 @@ export function useLiquidity(): UseLiquidityResult {
         const approveBDeploy = CasperService.buildApproveDeploy(
           tokenBConfig.hash,
           amountBRaw,
-          publicKey
+          signerPublicKey
         );
 
-        const approveBJson = DeployUtil.deployToJson(approveBDeploy);
+        const approveBJson = Deploy.toJSON(approveBDeploy);
         console.log('[addLiquidity] Requesting wallet signature for approve B...');
-        const walletResponseB = await wallet.sign(JSON.stringify(approveBJson), publicKey);
+        const walletResponseB = await wallet.sign(JSON.stringify(approveBJson), signerPublicKey);
 
         if (walletResponseB.cancelled) {
           throw new Error('User cancelled the transaction');
         }
 
-        const signedApproveB = DeployUtil.setSignature(
-          approveBDeploy,
-          walletResponseB.signature,
-          CLPublicKey.fromHex(publicKey)
-        );
+        const signedApproveB = CasperService.deployFromWalletResponse(approveBDeploy, walletResponseB, signerPublicKey);
 
         const approveBHash = await CasperService.submitDeploy(signedApproveB);
         console.log('[addLiquidity] approveBHash:', approveBHash);
@@ -512,22 +506,18 @@ export function useLiquidity(): UseLiquidityResult {
         amountBRaw,
         amountAMin,
         amountBMin,
-        publicKey
+        signerPublicKey
       );
 
-      const addLiquidityJson = DeployUtil.deployToJson(addLiquidityDeploy);
+      const addLiquidityJson = Deploy.toJSON(addLiquidityDeploy);
       console.log('[addLiquidity] Requesting wallet signature for add_liquidity...');
-      const walletResponseLiquidity = await wallet.sign(JSON.stringify(addLiquidityJson), publicKey);
+      const walletResponseLiquidity = await wallet.sign(JSON.stringify(addLiquidityJson), signerPublicKey);
 
       if (walletResponseLiquidity.cancelled) {
         throw new Error('User cancelled the transaction');
       }
 
-      const signedAddLiquidity = DeployUtil.setSignature(
-        addLiquidityDeploy,
-        walletResponseLiquidity.signature,
-        CLPublicKey.fromHex(publicKey)
-      );
+      const signedAddLiquidity = CasperService.deployFromWalletResponse(addLiquidityDeploy, walletResponseLiquidity, signerPublicKey);
 
       const addLiquidityHash = await CasperService.submitDeploy(signedAddLiquidity);
       console.log('[addLiquidity] addLiquidityHash:', addLiquidityHash);

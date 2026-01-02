@@ -46,10 +46,21 @@ export type NetworkName = 'testnet' | 'mainnet';
 export type TokenSymbol = 'CSPR' | 'ECTO' | 'USDC' | 'WETH' | 'WBTC';
 export type ContractVersion = 'odra' | 'native';
 
+const ENV = import.meta.env as any;
+const envGet = (key: string): string | undefined => {
+  const v = ENV?.[key] ?? ENV?.[`VITE_${key}`];
+  return typeof v === 'string' && v.length ? v : undefined;
+};
+
+const stripHashPrefix = (s: string | undefined): string | undefined => {
+  if (!s) return undefined;
+  return s.startsWith('hash-') ? s.slice('hash-'.length) : s;
+};
+
 // Odra Contracts - Built with Odra framework
 const ODRA_CONTRACTS: ContractsConfig = {
-  factory: 'hash-2d752507bdb93699bfdcccc3018e6feaa4d25b051944c38691d584fa796d9dd4',
-  router: 'hash-9c10e021bf564421da1ce9b820568a278a5736b33ca4af37361cb9595ab4ec61',
+  factory: envGet('FACTORY_CONTRACT_HASH') || 'hash-2d752507bdb93699bfdcccc3018e6feaa4d25b051944c38691d584fa796d9dd4',
+  router: envGet('ROUTER_CONTRACT_HASH') || 'hash-9c10e021bf564421da1ce9b820568a278a5736b33ca4af37361cb9595ab4ec61',
   lpToken: 'hash-16eacd913f576394fbf114f652504e960367be71b560795fb9d7cf4d5c98ea68',
   pairs: {
     'ECTO/USDC': 'hash-58e93450c5188c6d9caf9ce3e9938cd04d011203290ea688db858621ed148aa3',
@@ -68,32 +79,32 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     icon: null
   },
   ECTO: {
-    hash: 'hash-cc4f2511d53acaa22f1a84054637e09f930c54a1e166eb1fd60b34f6f81d437b',
-    packageHash: '1b0605985056c63e11765ec4b5d9d8fffaab9728f79593af559a75cb505e2e22',
+    hash: envGet('ECTO_CONTRACT_HASH') || 'hash-cc4f2511d53acaa22f1a84054637e09f930c54a1e166eb1fd60b34f6f81d437b',
+    packageHash: stripHashPrefix(envGet('ECTO_PACKAGE_HASH')) || '1b0605985056c63e11765ec4b5d9d8fffaab9728f79593af559a75cb505e2e22',
     symbol: 'ECTO',
     decimals: 18,
     name: 'Ectoplasm Token',
     icon: null
   },
   USDC: {
-    hash: 'hash-9e8eba6dad67c156e8743b3717fb790ca89fbeb61a5f5faa34e98586fe7f9832',
-    packageHash: '8d280a37beafdbca44b162e6c2588f8415b379731e56522fca570e4b7ff98168',
+    hash: envGet('USDC_CONTRACT_HASH') || 'hash-9e8eba6dad67c156e8743b3717fb790ca89fbeb61a5f5faa34e98586fe7f9832',
+    packageHash: stripHashPrefix(envGet('USDC_PACKAGE_HASH')) || '8d280a37beafdbca44b162e6c2588f8415b379731e56522fca570e4b7ff98168',
     symbol: 'USDC',
     decimals: 6,
     name: 'USD Coin',
     icon: null
   },
   WETH: {
-    hash: 'hash-e40d469291f1e7a00040b8dd3c0781094c6357a88ae1ef49a9e3ac07a06cb305',
-    packageHash: '01db8d5ecf32d600c0f601b76a094ed5bb982226d5e0430386077bb7bf4a6a07',
+    hash: envGet('WETH_CONTRACT_HASH') || 'hash-e40d469291f1e7a00040b8dd3c0781094c6357a88ae1ef49a9e3ac07a06cb305',
+    packageHash: stripHashPrefix(envGet('WETH_PACKAGE_HASH')) || '01db8d5ecf32d600c0f601b76a094ed5bb982226d5e0430386077bb7bf4a6a07',
     symbol: 'WETH',
     decimals: 18,
     name: 'Wrapped Ether',
     icon: null
   },
   WBTC: {
-    hash: 'hash-46c0d1e377b6d59b3ef0f8550d10a757720563456ddfe6e71590e0b1bf76e356',
-    packageHash: 'e0d728136c25fd7345a1e75a5a9d483498025cee516a948a38e95a39a3ba891c',
+    hash: envGet('WBTC_CONTRACT_HASH') || 'hash-46c0d1e377b6d59b3ef0f8550d10a757720563456ddfe6e71590e0b1bf76e356',
+    packageHash: stripHashPrefix(envGet('WBTC_PACKAGE_HASH')) || 'e0d728136c25fd7345a1e75a5a9d483498025cee516a948a38e95a39a3ba891c',
     symbol: 'WBTC',
     decimals: 8,
     name: 'Wrapped Bitcoin',
@@ -166,7 +177,7 @@ export const EctoplasmConfig = {
       name: 'Casper Testnet',
       rpcUrl: import.meta.env.DEV ? '/_casper/testnet' : '/api/casper/testnet',
       apiUrl: import.meta.env.DEV ? '/_csprcloud/testnet' : '/api/csprcloud/testnet',
-      chainName: 'casper-test',
+      chainName: envGet('CHAIN_NAME') || 'casper-test',
     },
     mainnet: {
       name: 'Casper Mainnet',
@@ -177,13 +188,13 @@ export const EctoplasmConfig = {
   } as Record<NetworkName, NetworkConfig>,
 
   // Current Network (toggle for deployment)
-  currentNetwork: 'testnet' as NetworkName,
+  currentNetwork: (envGet('ECTOPLASM_NETWORK') as NetworkName) || 'testnet' as NetworkName,
 
   // Contract Version - 'odra' (Odra framework) or 'native' (Casper 2.0 native)
   // Stored in localStorage for persistence
   _contractVersion: (typeof localStorage !== 'undefined'
     ? localStorage.getItem('ectoplasm_contract_version') as ContractVersion
-    : null) || 'native' as ContractVersion,
+    : null) || ((envGet('ROUTER_PACKAGE_HASH') || envGet('FACTORY_PACKAGE_HASH')) ? 'odra' : 'native') as ContractVersion,
 
   get contractVersion(): ContractVersion {
     return this._contractVersion;

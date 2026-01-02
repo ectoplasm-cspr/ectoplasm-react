@@ -2,6 +2,15 @@ import React, { createContext, useContext, useState, useCallback, useEffect, Rea
 import { CasperService, BalanceResult } from '../services/casper';
 import { STORAGE_KEYS } from '../utils/constants';
 
+const normalizePublicKeyHex = (value: string): string => {
+  const hex = value.replace(/^0x/i, '').trim();
+  const prefix = hex.slice(0, 2).toLowerCase();
+  if (prefix === '00' || prefix === '01' || prefix === '02') return hex;
+  // Some providers return the raw 32-byte ED25519 key without the algorithm tag.
+  if (hex.length === 64) return `01${hex}`;
+  return hex;
+};
+
 interface WalletContextType {
   connected: boolean;
   connecting: boolean;
@@ -62,12 +71,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
         try {
           const result = await clickUI.signIn();
           if (result?.activeKey) {
-            setPublicKey(result.activeKey);
+            const pk = normalizePublicKeyHex(result.activeKey);
+            setPublicKey(pk);
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'csprclick');
 
             // Fetch balances after connection
-            const allBalances = await CasperService.getAllBalances(result.activeKey);
+            const allBalances = await CasperService.getAllBalances(pk);
             setBalances(allBalances);
             return;
           }
@@ -83,12 +93,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
         if (connected) {
           const activeKey = await casperWallet.getActivePublicKey();
           if (activeKey) {
-            setPublicKey(activeKey);
+            const pk = normalizePublicKeyHex(activeKey);
+            setPublicKey(pk);
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'casperwallet');
 
             // Fetch balances after connection
-            const allBalances = await CasperService.getAllBalances(activeKey);
+            const allBalances = await CasperService.getAllBalances(pk);
             setBalances(allBalances);
             return;
           }
@@ -136,9 +147,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
             if (clickUI?.getActiveKey) {
               const activeKey = await clickUI.getActiveKey();
               if (activeKey) {
-                setPublicKey(activeKey);
+                const pk = normalizePublicKeyHex(activeKey);
+                setPublicKey(pk);
                 setConnected(true);
-                const allBalances = await CasperService.getAllBalances(activeKey);
+                const allBalances = await CasperService.getAllBalances(pk);
                 setBalances(allBalances);
               }
             }
@@ -149,9 +161,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
               if (isConnected) {
                 const activeKey = await casperWallet.getActivePublicKey();
                 if (activeKey) {
-                  setPublicKey(activeKey);
+                  const pk = normalizePublicKeyHex(activeKey);
+                  setPublicKey(pk);
                   setConnected(true);
-                  const allBalances = await CasperService.getAllBalances(activeKey);
+                  const allBalances = await CasperService.getAllBalances(pk);
                   setBalances(allBalances);
                 }
               }

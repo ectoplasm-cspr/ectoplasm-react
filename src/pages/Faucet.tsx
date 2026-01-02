@@ -1,6 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '../contexts/WalletContext';
 import { EctoplasmConfig } from '../config/ectoplasm';
+import {
+  Args,
+  CLValue,
+  ContractHash,
+  Deploy,
+  DeployHeader,
+  ExecutableDeployItem,
+  Key,
+  PublicKey,
+  StoredContractByHash
+} from 'casper-js-sdk';
+import { CasperService } from '../services/casper';
 
 export function Faucet() {
   const { connected, connect, publicKey, balances, refreshBalances } = useWallet();
@@ -62,83 +74,42 @@ export function Faucet() {
         throw new Error('CasperWallet not found. Please install the Casper Wallet extension.');
       }
 
-      // Build mint deploy
-      const w = window as any;
-      const sdk = w.Casper || w.CasperSDK || w.casper_js_sdk || w;
-      const CLPublicKey = sdk.CLPublicKey || w.CLPublicKey;
-      const CLValueBuilder = sdk.CLValueBuilder || w.CLValueBuilder;
-      const RuntimeArgs = sdk.RuntimeArgs || w.RuntimeArgs;
-      const DeployUtil = sdk.DeployUtil || w.DeployUtil;
-
-      if (!CLPublicKey || !DeployUtil) {
-        throw new Error('Casper SDK not loaded. Please refresh the page.');
-      }
-
-      const senderKey = CLPublicKey.fromHex(publicKey);
+      const normalizedPublicKey = CasperService.normalizePublicKeyHex(publicKey);
+      const senderKey = PublicKey.fromHex(normalizedPublicKey);
       const network = EctoplasmConfig.getNetwork();
 
       // Mint 100 ECTO tokens (with 18 decimals)
       const mintAmount = '100000000000000000000'; // 100 * 10^18
 
-      const args = RuntimeArgs.fromMap({
-        owner: CLValueBuilder.key(CLValueBuilder.byteArray(senderKey.toAccountHash())),
-        amount: CLValueBuilder.u256(mintAmount)
+      // Odra token entrypoint: mint(to: Address, amount: U256)
+      const args = Args.fromMap({
+        to: CLValue.newCLKey(Key.newKey(senderKey.accountHash().toPrefixedString())),
+        amount: CLValue.newCLUInt256(mintAmount)
       });
 
-      const contractHashBytes = Uint8Array.from(
-        ectoConfig.hash.replace('hash-', '').match(/.{2}/g)!.map(byte => parseInt(byte, 16))
+      const session = new ExecutableDeployItem();
+      session.storedContractByHash = new StoredContractByHash(
+        ContractHash.newContract(CasperService.normalizeContractHashHex(ectoConfig.hash)),
+        'mint',
+        args
       );
+      const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR gas
+      const header = DeployHeader.default();
+      header.account = senderKey;
+      header.chainName = network.chainName;
+      header.gasPrice = 1;
+      const deploy = Deploy.makeDeploy(header, payment, session);
 
-      const deploy = DeployUtil.makeDeploy(
-        new DeployUtil.DeployParams(
-          senderKey,
-          network.chainName,
-          1,
-          3600000
-        ),
-        DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-          contractHashBytes,
-          'mint',
-          args
-        ),
-        DeployUtil.standardPayment('3000000000') // 3 CSPR gas
-      );
+      // Sign with wallet (Casper Wallet returns different shapes across versions).
+      const unsignedDeployJson = Deploy.toJSON(deploy);
+      const signedResult = await casperWallet.sign(JSON.stringify(unsignedDeployJson), normalizedPublicKey);
 
-      // Sign with wallet
-      const deployJson = DeployUtil.deployToJson(deploy);
-      const signedDeployJson = await casperWallet.sign(
-        JSON.stringify(deployJson),
-        publicKey
-      );
-
-      if (signedDeployJson.cancelled) {
+      if (signedResult?.cancelled) {
         throw new Error('Transaction cancelled by user');
       }
 
-      const signedDeploy = DeployUtil.deployFromJson(JSON.parse(signedDeployJson.signature)).val;
-
-      // Submit deploy
-      const rpcUrl = network.rpcUrl;
-      const response = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'account_put_deploy',
-          params: {
-            deploy: DeployUtil.deployToJson(signedDeploy).deploy
-          }
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.error) {
-        throw new Error(result.error.message || 'Failed to submit transaction');
-      }
-
-      const deployHash = result.result?.deploy_hash;
+      const signedDeploy = CasperService.deployFromWalletResponse(deploy, signedResult, normalizedPublicKey);
+      const deployHash = await CasperService.submitDeploy(signedDeploy);
 
       // Update cooldown
       const now = Date.now();
