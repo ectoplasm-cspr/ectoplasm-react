@@ -1,0 +1,112 @@
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  min-width: 350px;
+  max-width: 500px;
+  padding: 1rem 1.5rem;
+  background: var(--card, #07242c);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(76, 245, 199, 0.3);
+  z-index: 10000;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast-success {
+  border-color: rgba(76, 245, 199, 0.5);
+  background: linear-gradient(135deg, rgba(76, 245, 199, 0.1) 0%, rgba(7, 36, 44, 0.95) 100%);
+}
+
+.toast-error {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(7, 36, 44, 0.95) 100%);
+}
+
+.toast-info {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(7, 36, 44, 0.95) 100%);
+}
+
+.toast-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.toast-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.toast-message {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.toast-text {
+  color: var(--muted, #8ccfc0);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.toast-link {
+  color: var(--accent-primary, #4cf5c7);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.toast-link:hover {
+  color: var(--accent-secondary, #77f0f8);
+  transform: translateX(2px);
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted, #8ccfc0);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.toast-close:hover {
+  background: rgba(76, 245, 199, 0.1);
+  color: var(--accent-primary, #4cf5c7);
+}
+
+@media (max-width: 640px) {
+  .toast {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    min-width: auto;
+    max-width: none;
+  }
+}

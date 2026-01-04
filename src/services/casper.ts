@@ -903,22 +903,34 @@ class CasperServiceClass {
       deployJson = signedDeploy;
     }
 
-    // Extract just the deploy if wrapped
+    // Extract just the deploy/transaction if wrapped
     const deployData = deployJson.deploy || deployJson;
 
     console.log('[CasperService.submitDeploy] Submitting via direct RPC...');
+    console.log('[CasperService.submitDeploy] Deploy data keys:', Object.keys(deployData));
+    console.log('[CasperService.submitDeploy] Has cancel_hash:', deployData.cancel_hash !== undefined);
+    console.log('[CasperService.submitDeploy] Has hash:', deployData.hash !== undefined);
     const network = EctoplasmConfig.getNetwork();
 
-    // Use direct fetch to submit deploy via account_put_deploy RPC method
+    // Check if this is a Casper 2.0 transaction (has cancel_hash field) or legacy deploy
+    // Also check the raw JSON string for cancel_hash in case it's nested
+    const dataStr = JSON.stringify(deployData);
+    const isTransaction = deployData.cancel_hash !== undefined || dataStr.includes('"cancel_hash"');
+    const method = isTransaction ? 'transaction_v1_put' : 'account_put_deploy';
+    const paramKey = isTransaction ? 'transaction' : 'deploy';
+    
+    console.log('[CasperService.submitDeploy] Using method:', method);
+
+    // Use direct fetch to submit deploy/transaction
     const response = await fetch(network.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: Date.now(),
-        method: 'account_put_deploy',
+        method: method,
         params: {
-          deploy: deployData
+          [paramKey]: deployData
         }
       })
     });
@@ -931,9 +943,9 @@ class CasperServiceClass {
       throw new Error(result.error.message || `RPC error: ${JSON.stringify(result.error)}`);
     }
 
-    const deployHash = result.result?.deploy_hash;
+    const deployHash = result.result?.deploy_hash || result.result?.transaction_hash?.Version1 || result.result?.transaction_hash;
     if (!deployHash) {
-      throw new Error('No deploy hash returned from RPC');
+      throw new Error('No deploy/transaction hash returned from RPC');
     }
 
     console.log('[CasperService.submitDeploy] Deploy hash:', deployHash);
