@@ -40,28 +40,31 @@ export interface ContractsConfig {
   router: string;
   lpToken: string;
   pairs: Record<string, string>;
+  // LST (Liquid Staking Token) contracts
+  scsprToken?: string;
+  stakingManager?: string;
 }
 
 export type NetworkName = "testnet" | "mainnet";
-export type TokenSymbol = "CSPR" | "ECTO" | "USDC" | "WETH" | "WBTC";
+export type TokenSymbol = "CSPR" | "ECTO" | "USDC" | "WETH" | "WBTC" | "sCSPR";
 export type ContractVersion = "odra" | "native";
 
-// Odra Contracts - Built with Odra framework
+// Odra Contracts - Built with Odra framework (DEPLOYED)
 const ODRA_CONTRACTS: ContractsConfig = {
   factory:
-    "hash-971838101cc6b71719acba34a2a15dc7c18318131c3fcff5a05a18b4c9428f30",
+    "hash-464e54c4e050fb995ac7bb3a9a4eef08f0b9010daf490ceb062ab5f7a8149263",
   router:
-    "hash-2fc68c2467facd37ecf8e0d03ba57c78250c88a6488008622fe82f78d58fe0e0",
+    "hash-1e5163f46dbc5aed9abe53bbf346aaa8d7239510dd32e6a06cfc9b16cce1de99",
   lpToken:
-    "hash-b6a1031ce1c96eeecfea95a6c28d7135ba33139e02e5ab4a0387b328b0eeddb4",
+    "hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7",
   pairs: {
-    "ECTO/USDC":
-      "58e93450c5188c6d9caf9ce3e9938cd04d011203290ea688db858621ed148aa3",
-    "WETH/USDC":
-      "hash-433c92970b5f9073222f9e50739af8092b1e96345e6eb2a33e511308495f3f7c",
-    "WBTC/USDC":
-      "hash-6be8a5c893aed8cfa0fbe3c36fa4d3be03e4d9d6d2cfe02e55e965f3c4e355c0",
+    // Pairs will be created dynamically via factory
   },
+  // LST Contracts
+  scsprToken:
+    "hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d",
+  stakingManager:
+    "hash-626f1cb3e344e7ed53ce7b0f4e4b9c6d30aaff724be88a9380d8e3f73614e3b2",
 };
 
 const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
@@ -74,39 +77,48 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     icon: null,
   },
   ECTO: {
-    hash: "contract-8aca78f9ea7594240acdcceae2bc1b6aec33bb8960b5ec7fc61928ea8e442718",
+    hash: "hash-1a4edcb64811ae6ce8468fc23f562aa210e26f2b53f7e2968a3bfdaf0702d5c8",
     packageHash:
-      "hash-de7f410ea69479b7361cc996995faee468aff042980c35ff7f3e206405dede23",
+      "hash-2e52f8fe9ca9d7035ce8c2f84ab0780231226be612766448b878352ca4cd8903",
     symbol: "ECTO",
     decimals: 18,
     name: "Ectoplasm Token",
     icon: null,
   },
   USDC: {
-    hash: "contract-8f84571151c246af32d3d7c3a731692fd6a45e11350e15ff75e64384149b7c25",
+    hash: "hash-325032bbeb00e82595b009b722c1c0bd471f2827b5404a3f6fbf196d1d77a888",
     packageHash:
-      "hash-6747a09ec86143394b41a1d95374aa0ed4fdfbca43573911dfef16062ee332b2",
+      "hash-012891771aba35317f480cf52082411c18c5012e0436a96cb5ae1189207a15ab",
     symbol: "USDC",
     decimals: 6,
     name: "USD Coin",
     icon: null,
   },
   WETH: {
-    hash: "contract-01496d996cc47097077cd8af4cb0bbbdd4c804ef49928631385ff61c76a36c9d",
+    hash: "hash-cf0db4233c95cfbd4639810578d450ffec09add32c8995f78515106f6a282120",
     packageHash:
-      "hash-428959f3e2cb2b98e730a6ee7d9b7c66c89fb0429e776c27d101cdbe3fe7089d",
+      "hash-39296df7ae4dc7a0d6f22ffceab89b5b93c97ea8cc92fe3967f49dce5c46199f",
     symbol: "WETH",
     decimals: 18,
     name: "Wrapped Ether",
     icon: null,
   },
   WBTC: {
-    hash: "contract-70204794d5e396dc743c79af817f0a213c8c7b5f40b6af593ee2ac1463c1daac",
+    hash: "hash-2dca075e7804872e367e40a64ff0d7c73bcd0a7ca30a98b9a18cb245911b1a6f",
     packageHash:
-      "hash-3d774cde807e5616a99b1bac6b7d88590ca794d47c0a49d189d77f7e9e77ef91",
+      "hash-9ba451f07dd396d95fb28974b440b527f4ed20acbbeebd83c5710d5e2dff8717",
     symbol: "WBTC",
     decimals: 8,
     name: "Wrapped Bitcoin",
+    icon: null,
+  },
+  sCSPR: {
+    hash: "hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d",
+    packageHash:
+      "hash-9dc4dc802730354161070e541b9860d427f9eae9330fe993728e717420d7f01f",
+    symbol: "sCSPR",
+    decimals: 18,
+    name: "Staked CSPR",
     icon: null,
   },
 };
@@ -114,19 +126,19 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
 // Native Contracts - Casper 2.0 native with init pattern (no framework)
 const NATIVE_CONTRACTS: ContractsConfig = {
   factory:
-    "hash-971838101cc6b71719acba34a2a15dc7c18318131c3fcff5a05a18b4c9428f30",
+    "hash-464e54c4e050fb995ac7bb3a9a4eef08f0b9010daf490ceb062ab5f7a8149263",
   router:
-    "hash-2fc68c2467facd37ecf8e0d03ba57c78250c88a6488008622fe82f78d58fe0e0", // TODO: Deploy V2 router
+    "hash-1e5163f46dbc5aed9abe53bbf346aaa8d7239510dd32e6a06cfc9b16cce1de99",
   lpToken:
-    "hash-b6a1031ce1c96eeecfea95a6c28d7135ba33139e02e5ab4a0387b328b0eeddb4",
+    "hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7",
   pairs: {
-    "ECTO/USDC":
-      "hash-c8aa723b7c6b701b68065403ec50256188ab37f4d9d1adc1dfed9dcc76a26e3f",
-    "WETH/USDC":
-      "hash-6ac0cc80497b785a21edcb2e9a7a02301189d2df3b307d80d2946e030a44b73e",
-    "WBTC/USDC":
-      "hash-e2fa7346714354619f1f0e8fbd41deb45dc65e88a09256e0ab85af514e63b324",
+    // Pairs will be created dynamically via factory
   },
+  // LST Contracts (same as Odra for now)
+  scsprToken:
+    "hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d",
+  stakingManager:
+    "hash-626f1cb3e344e7ed53ce7b0f4e4b9c6d30aaff724be88a9380d8e3f73614e3b2",
 };
 
 const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
@@ -139,39 +151,48 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
     icon: null,
   },
   ECTO: {
-    hash: "hash-01b5a8092c45fb6276c5c3cf6b4c22730856cf0fc0051b078cf86010147d7a6f",
+    hash: "hash-1a4edcb64811ae6ce8468fc23f562aa210e26f2b53f7e2968a3bfdaf0702d5c8",
     packageHash:
-      "67aef0547deacc3fdc310edf2c34be7e2cf122b9505e3cd9595164e22e495dfc",
+      "hash-2e52f8fe9ca9d7035ce8c2f84ab0780231226be612766448b878352ca4cd8903",
     symbol: "ECTO",
     decimals: 18,
     name: "Ectoplasm Token",
     icon: null,
   },
   USDC: {
-    hash: "hash-da800ac07a00e316bc84e3c1b614cfd9ff2db87b90904e30fa3a1bc5a632c2f0",
+    hash: "hash-325032bbeb00e82595b009b722c1c0bd471f2827b5404a3f6fbf196d1d77a888",
     packageHash:
-      "bfdf7e012e8cd03a66f15c9ecc11cec4895a4379ba24d81933ea3f018719de14",
+      "hash-012891771aba35317f480cf52082411c18c5012e0436a96cb5ae1189207a15ab",
     symbol: "USDC",
     decimals: 6,
     name: "USD Coin",
     icon: null,
   },
   WETH: {
-    hash: "hash-38fa5e20e2f80fb777e6036e2582adb98b387d785828a672ff2cea4aeb9fa990",
+    hash: "hash-cf0db4233c95cfbd4639810578d450ffec09add32c8995f78515106f6a282120",
     packageHash:
-      "f27360e46517105bf849a0d3f96f22ac2eeb5b764f4de85fa96e2e3270eb9e5b",
+      "hash-39296df7ae4dc7a0d6f22ffceab89b5b93c97ea8cc92fe3967f49dce5c46199f",
     symbol: "WETH",
     decimals: 18,
     name: "Wrapped Ether",
     icon: null,
   },
   WBTC: {
-    hash: "hash-e7ff916e02b42268d755b8aaffa9e8ae09e00c8d99c0db628d02c925020bd8fb",
+    hash: "hash-2dca075e7804872e367e40a64ff0d7c73bcd0a7ca30a98b9a18cb245911b1a6f",
     packageHash:
-      "bc995293b6a7a43574d5c124e8822442ef0c755595b824cec92aef6ef9463f6c",
+      "hash-9ba451f07dd396d95fb28974b440b527f4ed20acbbeebd83c5710d5e2dff8717",
     symbol: "WBTC",
     decimals: 8,
     name: "Wrapped Bitcoin",
+    icon: null,
+  },
+  sCSPR: {
+    hash: "hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d",
+    packageHash:
+      "hash-9dc4dc802730354161070e541b9860d427f9eae9330fe993728e717420d7f01f",
+    symbol: "sCSPR",
+    decimals: 18,
+    name: "Staked CSPR",
     icon: null,
   },
 };
