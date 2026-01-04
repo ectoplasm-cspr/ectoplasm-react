@@ -1,9 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '../contexts/WalletContext';
+import { useDex } from '../contexts/DexContext';
 import { EctoplasmConfig } from '../config/ectoplasm';
+import { useToast } from '../contexts/ToastContext';
+import * as sdk from 'casper-js-sdk';
+
+const { Deploy, PublicKey } = (sdk as any).default ?? sdk;
 
 export function Faucet() {
   const { connected, connect, publicKey, balances, refreshBalances } = useWallet();
+  const { dex, config } = useDex();
+  const { showToast, removeToast } = useToast();
+  
   const [requesting, setRequesting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [lastRequest, setLastRequest] = useState<number | null>(null);
@@ -46,13 +54,12 @@ export function Faucet() {
 
     setRequesting(true);
     setMessage(null);
+    let pendingId: string | null = null;
 
     try {
-      // For testnet, we'll try to call the mint function on the ECTO token
-      // This requires the token contract to have a public mint function
-      const ectoConfig = EctoplasmConfig.tokens.ECTO;
+      const ectoConfig = config.tokens.ECTO;
 
-      if (!ectoConfig.hash) {
+      if (!ectoConfig.packageHash) {
         throw new Error('ECTO token contract not configured');
       }
 
@@ -62,83 +69,41 @@ export function Faucet() {
         throw new Error('CasperWallet not found. Please install the Casper Wallet extension.');
       }
 
-      // Build mint deploy
-      const w = window as any;
-      const sdk = w.Casper || w.CasperSDK || w.casper_js_sdk || w;
-      const CLPublicKey = sdk.CLPublicKey || w.CLPublicKey;
-      const CLValueBuilder = sdk.CLValueBuilder || w.CLValueBuilder;
-      const RuntimeArgs = sdk.RuntimeArgs || w.RuntimeArgs;
-      const DeployUtil = sdk.DeployUtil || w.DeployUtil;
+      const senderKey = PublicKey.fromHex(publicKey);
 
-      if (!CLPublicKey || !DeployUtil) {
-        throw new Error('Casper SDK not loaded. Please refresh the page.');
-      }
+      // Mint 100 ECTO tokens (with 9 decimals actually? No, ECTO is 9 in config usually, let's check config)
+      // EctoplasmConfig usually sets defaults, but we should rely on config.decimals
+      const amountRaw = BigInt(100) * BigInt(10 ** ectoConfig.decimals);
 
-      const senderKey = CLPublicKey.fromHex(publicKey);
-      const network = EctoplasmConfig.getNetwork();
-
-      // Mint 100 ECTO tokens (with 18 decimals)
-      const mintAmount = '100000000000000000000'; // 100 * 10^18
-
-      const args = RuntimeArgs.fromMap({
-        owner: CLValueBuilder.key(CLValueBuilder.byteArray(senderKey.toAccountHash())),
-        amount: CLValueBuilder.u256(mintAmount)
-      });
-
-      const contractHashBytes = Uint8Array.from(
-        ectoConfig.hash.replace('hash-', '').match(/.{2}/g)!.map(byte => parseInt(byte, 16))
+      const mintDeploy = dex.makeMintTokenDeploy(
+          ectoConfig.packageHash,
+          senderKey.accountHash().toPrefixedString(), // to
+          amountRaw,
+          senderKey
       );
 
-      const deploy = DeployUtil.makeDeploy(
-        new DeployUtil.DeployParams(
-          senderKey,
-          network.chainName,
-          1,
-          3600000
-        ),
-        DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-          contractHashBytes,
-          'mint',
-          args
-        ),
-        DeployUtil.standardPayment('3000000000') // 3 CSPR gas
-      );
+      const deployJson = Deploy.toJSON(mintDeploy);
 
-      // Sign with wallet
-      const deployJson = DeployUtil.deployToJson(deploy);
-      const signedDeployJson = await casperWallet.sign(
-        JSON.stringify(deployJson),
-        publicKey
-      );
+      pendingId = Date.now().toString();
+      showToast('pending', 'Sign Mint Request...');
+      
+      const signedResult = await casperWallet.sign(JSON.stringify(deployJson), publicKey);
 
-      if (signedDeployJson.cancelled) {
+      if (signedResult?.cancelled) {
         throw new Error('Transaction cancelled by user');
       }
 
-      const signedDeploy = DeployUtil.deployFromJson(JSON.parse(signedDeployJson.signature)).val;
-
-      // Submit deploy
-      const rpcUrl = network.rpcUrl;
-      const response = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'account_put_deploy',
-          params: {
-            deploy: DeployUtil.deployToJson(signedDeploy).deploy
-          }
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.error) {
-        throw new Error(result.error.message || 'Failed to submit transaction');
+      // Attach signature
+      if (deployJson.approvals) {
+           deployJson.approvals.push({ signer: publicKey, signature: signedResult });
+      } else {
+           deployJson.approvals = [{ signer: publicKey, signature: signedResult }];
       }
 
-      const deployHash = result.result?.deploy_hash;
+      if (pendingId) removeToast(pendingId);
+      
+      showToast('pending', 'Broadcasting Mint...');
+      const deployHash = await dex.sendDeployRaw(deployJson);
 
       // Update cooldown
       const now = Date.now();
@@ -149,6 +114,7 @@ export function Faucet() {
         type: 'success',
         text: `Requested 100 ECTO tokens! Deploy hash: ${deployHash?.slice(0, 16)}...`
       });
+      showToast('success', 'Mint Submitted!', deployHash);
 
       // Refresh balances after a delay
       setTimeout(() => {
@@ -157,8 +123,9 @@ export function Faucet() {
 
     } catch (error: any) {
       console.error('Faucet error:', error);
+      if (pendingId) removeToast(pendingId);
+      showToast('error', error.message);
 
-      // Check if it's a contract error (mint function might not be public)
       if (error.message?.includes('mint') || error.message?.includes('entry point')) {
         setMessage({
           type: 'error',

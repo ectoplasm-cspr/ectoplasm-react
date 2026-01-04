@@ -1,6 +1,19 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { CasperService, BalanceResult } from '../services/casper';
+import { BalanceResult } from '../services/casper';
 import { STORAGE_KEYS } from '../utils/constants';
+import { useDex } from './DexContext';
+import { formatTokenAmount } from '../utils/format';
+import * as sdk from 'casper-js-sdk';
+const { PublicKey } = (sdk as any).default ?? sdk;
+
+const normalizePublicKeyHex = (value: string): string => {
+  const hex = value.replace(/^0x/i, '').trim();
+  const prefix = hex.slice(0, 2).toLowerCase();
+  if (prefix === '00' || prefix === '01' || prefix === '02') return hex;
+  // Some providers return the raw 32-byte ED25519 key without the algorithm tag.
+  if (hex.length === 64) return `01${hex}`;
+  return hex;
+};
 
 interface WalletContextType {
   connected: boolean;
@@ -40,16 +53,63 @@ export function WalletProvider({ children }: WalletProviderProps) {
     return w.CasperWalletProvider?.();
   }, []);
 
+  /* import { useDex } from './DexContext'; added at top via multi-replace or I'll just rewrite the file imports */
+
+  const { dex, config } = useDex();
+
+  // Helper to fetch balances for any public key using DexClient
+  const fetchBalancesForAccount = useCallback(async (pk: string) => {
+      try {
+          // console.log('[WalletProvider] Fetching balances for', pk);
+          const newBalances: Record<string, BalanceResult> = {};
+
+          // 1. CSPR Balance
+          const csprRaw = await dex.getCSPRBalance(pk);
+          newBalances['CSPR'] = {
+              raw: csprRaw,
+              formatted: formatTokenAmount(csprRaw, 9),
+              decimals: 9
+          };
+
+          // 2. Token Balances
+          let accountHashStr = '';
+          try {
+              if (pk.length === 64 || pk.startsWith('01') || pk.startsWith('02')) {
+                  // Basic heuristic if PublicKey class issues prevent import
+                   const { PublicKey } = (sdk as any).default ?? sdk;
+                   const k = PublicKey.fromHex(pk);
+                   accountHashStr = 'account-hash-' + k.accountHash().toHex();
+              }
+          } catch (e) { console.error('Error deriving account hash', e); }
+
+          if (accountHashStr) {
+              for (const [symbol, tokenInfo] of Object.entries(config.tokens)) {
+                  try {
+                      const raw = await dex.getTokenBalance(tokenInfo.contractHash, accountHashStr);
+                      const formatted = formatTokenAmount(raw, tokenInfo.decimals);
+                      
+                      newBalances[symbol] = {
+                          raw: raw,
+                          formatted: formatted,
+                          decimals: tokenInfo.decimals
+                      };
+                  } catch (e) {
+                      console.error(`[Wallet] Error fetching ${symbol}`, e);
+                  }
+              }
+          }
+          return newBalances;
+      } catch (err) {
+          console.error('Failed to fetch balances:', err);
+          return {};
+      }
+  }, [dex, config]);
+
   const refreshBalances = useCallback(async () => {
     if (!publicKey) return;
-
-    try {
-      const allBalances = await CasperService.getAllBalances(publicKey);
-      setBalances(allBalances);
-    } catch (err: any) {
-      console.error('Failed to refresh balances:', err);
-    }
-  }, [publicKey]);
+    const bals = await fetchBalancesForAccount(publicKey);
+    setBalances(bals);
+  }, [publicKey, fetchBalancesForAccount]);
 
   const connect = useCallback(async () => {
     setConnecting(true);
@@ -62,12 +122,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
         try {
           const result = await clickUI.signIn();
           if (result?.activeKey) {
-            setPublicKey(result.activeKey);
+            const pk = normalizePublicKeyHex(result.activeKey);
+            setPublicKey(pk);
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'csprclick');
 
             // Fetch balances after connection
-            const allBalances = await CasperService.getAllBalances(result.activeKey);
+            const allBalances = await fetchBalancesForAccount(pk);
             setBalances(allBalances);
             return;
           }
@@ -83,12 +144,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
         if (connected) {
           const activeKey = await casperWallet.getActivePublicKey();
           if (activeKey) {
-            setPublicKey(activeKey);
+            const pk = normalizePublicKeyHex(activeKey);
+            setPublicKey(pk);
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'casperwallet');
 
             // Fetch balances after connection
-            const allBalances = await CasperService.getAllBalances(activeKey);
+            const allBalances = await fetchBalancesForAccount(pk);
             setBalances(allBalances);
             return;
           }
@@ -103,7 +165,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
     } finally {
       setConnecting(false);
     }
-  }, [getClickUI, getCasperWallet]);
+  }, [getClickUI, getCasperWallet, fetchBalancesForAccount]);
 
   const disconnect = useCallback(() => {
     setConnected(false);
@@ -136,9 +198,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
             if (clickUI?.getActiveKey) {
               const activeKey = await clickUI.getActiveKey();
               if (activeKey) {
-                setPublicKey(activeKey);
+                const pk = normalizePublicKeyHex(activeKey);
+                setPublicKey(pk);
                 setConnected(true);
-                const allBalances = await CasperService.getAllBalances(activeKey);
+                const allBalances = await fetchBalancesForAccount(pk);
                 setBalances(allBalances);
               }
             }
@@ -149,9 +212,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
               if (isConnected) {
                 const activeKey = await casperWallet.getActivePublicKey();
                 if (activeKey) {
-                  setPublicKey(activeKey);
+                  const pk = normalizePublicKeyHex(activeKey);
+                  setPublicKey(pk);
                   setConnected(true);
-                  const allBalances = await CasperService.getAllBalances(activeKey);
+                  const allBalances = await fetchBalancesForAccount(pk);
                   setBalances(allBalances);
                 }
               }
@@ -165,7 +229,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
       attemptReconnect();
     }
-  }, [getClickUI, getCasperWallet]);
+  }, [getClickUI, getCasperWallet, fetchBalancesForAccount]);
 
   // Refresh balances periodically when connected
   useEffect(() => {

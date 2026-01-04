@@ -1,13 +1,34 @@
 import { useState, useCallback, useEffect } from 'react';
+import * as sdk from 'casper-js-sdk';
 import { useWallet } from '../contexts/WalletContext';
-import { CasperService, SwapQuote } from '../services/casper';
+import { useDex } from '../contexts/DexContext';
+import { useToast } from '../contexts/ToastContext';
 import { EctoplasmConfig } from '../config/ectoplasm';
+import { formatTokenAmount, parseTokenAmount } from '../utils/format';
+
+export interface SwapQuote {
+  valid: boolean;
+  amountIn: string;
+  amountInRaw: bigint;
+  amountOut: string;
+  amountOutRaw: bigint;
+  rate: string;
+  priceImpact: number;
+  minReceived: string;
+  path: string[];
+  pathContracts?: string[];
+  error?: string;
+  demo?: boolean;
+}
+
+const { Deploy, PublicKey } = (sdk as any).default ?? sdk;
 
 interface UseSwapResult {
   tokenIn: string;
   tokenOut: string;
   amountIn: string;
   amountOut: string;
+  slippage: string;
   quote: SwapQuote | null;
   loading: boolean;
   quoting: boolean;
@@ -15,24 +36,27 @@ interface UseSwapResult {
   setTokenIn: (symbol: string) => void;
   setTokenOut: (symbol: string) => void;
   setAmountIn: (amount: string) => void;
+  setSlippage: (slippage: string) => void;
   switchTokens: () => void;
   executeSwap: () => Promise<string | null>;
   refreshQuote: () => Promise<void>;
 }
 
 export function useSwap(): UseSwapResult {
-  const { connected, publicKey, refreshBalances } = useWallet();
+  const { connected, publicKey } = useWallet();
+  const { dex, config } = useDex();
+  const { showToast, removeToast } = useToast();
 
-  const [tokenIn, setTokenIn] = useState('ECTO');
-  const [tokenOut, setTokenOut] = useState('USDC');
+  const [tokenIn, setTokenIn] = useState('WCSPR');
+  const [tokenOut, setTokenOut] = useState('ECTO');
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('');
+  const [slippage, setSlippage] = useState('0.5'); // Default 0.5%
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [quoting, setQuoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Get quote when inputs change
   const refreshQuote = useCallback(async () => {
     if (!amountIn || parseFloat(amountIn) <= 0) {
       setQuote(null);
@@ -44,25 +68,78 @@ export function useSwap(): UseSwapResult {
     setError(null);
 
     try {
-      const newQuote = await CasperService.getSwapQuote(tokenIn, tokenOut, amountIn);
-      setQuote(newQuote);
+      const tIn = config.tokens[tokenIn];
+      const tOut = config.tokens[tokenOut];
 
-      if (newQuote.valid) {
-        setAmountOut(newQuote.amountOut);
-      } else {
-        setError(newQuote.error || 'Invalid quote');
-        setAmountOut('');
-      }
+      if (!tIn || !tOut) throw new Error("Invalid token configuration");
+
+      const pairAddr = await dex.getPairAddress(tIn.packageHash!, tOut.packageHash!);
+
+      if (!pairAddr) throw new Error('Liquidity pool not found');
+
+      const reserves = await dex.getPairReserves(pairAddr);
+
+      // Determine reserves based on token sort order
+      const isTokenIn0 = dex.isToken0(tIn.packageHash!, tOut.packageHash!);
+      const reserveIn = isTokenIn0 ? reserves.reserve0 : reserves.reserve1;
+      const reserveOut = isTokenIn0 ? reserves.reserve1 : reserves.reserve0;
+
+      if (reserveIn === 0n || reserveOut === 0n) throw new Error('Insufficient liquidity');
+
+      const decimalsIn = tIn.decimals;
+      const decimalsOut = tOut.decimals;
+
+      const amountInRaw = BigInt(parseTokenAmount(amountIn, decimalsIn));
+      const amountOutRaw = dex.getAmountOut(amountInRaw, reserveIn, reserveOut);
+      const amountOutFormatted = formatTokenAmount(amountOutRaw, decimalsOut);
+
+      // Price Impact Calculation
+      // ideal = amountIn * (reserveOut / reserveIn) 
+      // Note: Must adjust for decimals if they differ for the "price" ratio
+      // simplified: impact = (ideal_output - actual_output) / ideal_output
+
+      // We calculate prices as numbers for impact estimation
+      const rIn = Number(reserveIn) / (10 ** decimalsIn); // normalized reserve
+      const rOut = Number(reserveOut) / (10 ** decimalsOut); // normalized reserve
+      const currentPrice = rOut / rIn;
+
+      const inputVal = Number(amountIn);
+      const outputVal = Number(amountOutFormatted);
+
+      const idealOutput = inputVal * currentPrice;
+      const priceImpact = ((idealOutput - outputVal) / idealOutput) * 100;
+
+      // Minimum Received
+      const slippagePercent = parseFloat(slippage) || 0;
+      const minReceivedRaw = amountOutRaw * BigInt(Math.floor((100 - slippagePercent) * 100)) / 10000n;
+      const minReceived = formatTokenAmount(minReceivedRaw, decimalsOut);
+
+      setQuote({
+        valid: true,
+        amountIn,
+        amountInRaw,
+        amountOut: amountOutFormatted,
+        amountOutRaw,
+        rate: (outputVal / inputVal).toFixed(6),
+        priceImpact: Math.max(0, priceImpact),
+        minReceived,
+        path: [tokenIn, tokenOut],
+        pathContracts: [tIn.contractHash!, tOut.contractHash!],
+        demo: false
+      });
+      setAmountOut(amountOutFormatted);
+
     } catch (err: any) {
+      console.error(err);
       setError(err.message);
       setQuote(null);
       setAmountOut('');
     } finally {
       setQuoting(false);
     }
-  }, [tokenIn, tokenOut, amountIn]);
+  }, [tokenIn, tokenOut, amountIn, slippage, dex, config]);
 
-  // Debounce quote refresh
+  // Debounce quote
   useEffect(() => {
     const timeout = setTimeout(refreshQuote, 300);
     return () => clearTimeout(timeout);
@@ -72,114 +149,160 @@ export function useSwap(): UseSwapResult {
     setTokenIn(tokenOut);
     setTokenOut(tokenIn);
     setAmountIn(amountOut);
-    setAmountOut(amountIn);
-  }, [tokenIn, tokenOut, amountIn, amountOut]);
+    // Quote will refresh automatically due to effect
+  }, [tokenOut, tokenIn, amountOut]);
 
   const executeSwap = useCallback(async (): Promise<string | null> => {
     if (!connected || !publicKey) {
-      setError('Please connect your wallet');
+      showToast('error', 'Please connect your wallet');
       return null;
     }
-
     if (!quote || !quote.valid) {
-      setError('Invalid quote');
-      return null;
-    }
-
-    if (quote.demo) {
-      setError('Demo mode: Token contracts not deployed. Swap cannot be executed.');
+      showToast('error', 'Invalid quote');
       return null;
     }
 
     setLoading(true);
-    setError(null);
+    let pendingId: string | null = null;
 
     try {
-      // Check allowance and approve if needed
-      if (quote.path && quote.path[0]) {
-        const hasAllowance = await CasperService.checkAllowance(
-          quote.path[0],
-          publicKey,
-          quote.amountInRaw
-        );
+      const senderKey = PublicKey.fromHex(publicKey);
+      const tIn = config.tokens[tokenIn];
+      const tOut = config.tokens[tokenOut];
+      const ownerAccountHash = `account-hash-${senderKey.accountHash().toHex()}`;
 
-        if (!hasAllowance) {
-          // Build and sign approval deploy
-          const approveDeploy = CasperService.buildApproveDeploy(
-            quote.path[0],
-            quote.amountInRaw,
-            publicKey
-          );
-
-          // Sign with wallet (this will prompt user)
-          const w = window as any;
-          let signedApprove;
-
-          if (w.CasperWalletProvider) {
-            const wallet = w.CasperWalletProvider();
-            signedApprove = await wallet.sign(
-              JSON.stringify(approveDeploy),
-              publicKey
-            );
-          } else {
-            throw new Error('No wallet available for signing');
-          }
-
-          // Submit approval
-          const approveHash = await CasperService.submitDeploy(signedApprove);
-          console.log('Approval submitted:', approveHash);
-
-          // Wait for approval
-          const approveResult = await CasperService.waitForDeploy(approveHash);
-          if (!approveResult.success) {
-            throw new Error(`Approval failed: ${approveResult.error}`);
+      // Helper to extract signature as hex
+      const getSignatureHex = (providerRes: any) => {
+        if (typeof providerRes === 'string') return providerRes;
+        if (providerRes.signature) {
+          const sig = providerRes.signature;
+          if (typeof sig === 'string') return sig;
+          if (typeof sig === 'object') {
+            // Convert byte-like object to hex string
+            return Object.values(sig).map((b: any) => Number(b).toString(16).padStart(2, '0')).join('');
           }
         }
-      }
+        return '';
+      };
 
-      // Build swap deploy
-      const swapDeploy = CasperService.buildSwapDeploy(quote, publicKey);
+      // Check current allowance
+      pendingId = Date.now().toString();
+      showToast('pending', 'Checking allowance...');
 
-      // Sign with wallet
+      const currentAllowance = await dex.getAllowance(
+        tIn.packageHash!,
+        ownerAccountHash,
+        config.routerPackageHash
+      );
+
+      if (pendingId) removeToast(pendingId);
+
+      let needsApproval = currentAllowance < quote.amountInRaw;
+
+      // Get wallet provider (needed for both approval and swap)
       const w = window as any;
-      let signedSwap;
+      const walletProvider = w.CasperWalletProvider && w.CasperWalletProvider();
+      if (!walletProvider) throw new Error("Wallet provider not found");
 
-      if (w.CasperWalletProvider) {
-        const wallet = w.CasperWalletProvider();
-        signedSwap = await wallet.sign(
-          JSON.stringify(swapDeploy),
-          publicKey
+      // 1. Approve (if needed)
+      if (needsApproval) {
+        pendingId = Date.now().toString();
+        showToast('pending', 'Step 1/2: Sign Approval...');
+
+        const approveDeploy = dex.makeApproveTokenDeploy(
+          tIn.packageHash!,
+          config.routerPackageHash,
+          quote.amountInRaw,
+          senderKey
         );
-      } else {
-        throw new Error('No wallet available for signing');
+
+        const approveJson = Deploy.toJSON(approveDeploy);
+        const approveRes = await walletProvider.sign(JSON.stringify(approveJson), publicKey);
+
+        if (approveRes.cancelled) throw new Error('Approval cancelled');
+
+        let approveSignature = getSignatureHex(approveRes);
+
+        // Prepend algorithm tag if missing (Casper RPC expects tagged signatures)
+        // Signatures are 64 bytes (128 hex). Tagged signatures are 65 bytes (130 hex).
+        if (approveSignature.length === 128 && publicKey) {
+          const algoTag = publicKey.substring(0, 2); // '01' for Ed25519, '02' for Secp256k1
+          approveSignature = algoTag + approveSignature;
+        }
+
+        // Attach sig
+        if (approveJson.approvals) approveJson.approvals.push({ signer: publicKey, signature: approveSignature });
+        else approveJson.approvals = [{ signer: publicKey, signature: approveSignature }];
+
+        if (pendingId) removeToast(pendingId);
+        showToast('pending', 'Step 1/2: Broadcasting Approval...');
+
+        const approveHash = await dex.sendDeployRaw(approveJson);
+        await dex.waitForDeploy(approveHash);
       }
 
-      // Submit swap
-      const swapHash = await CasperService.submitDeploy(signedSwap);
-      console.log('Swap submitted:', swapHash);
+      // 2. Swap
+      pendingId = (Date.now() + 1).toString();
+      const swapStepLabel = needsApproval ? 'Step 2/2' : 'Step 1/1';
+      showToast('pending', `${swapStepLabel}: Sign Swap...`);
 
-      // Refresh balances
-      await refreshBalances();
+      // Recalculate min output based on current quote to be safe
+      const slippagePercent = parseFloat(slippage) || 0.5;
+      const minAmountOutRaw = BigInt(quote.amountOutRaw) * BigInt(Math.floor((100 - slippagePercent) * 100)) / 10000n;
 
-      // Clear form
+      const swapDeploy = dex.makeSwapExactTokensForTokensDeploy(
+        quote.amountInRaw,
+        minAmountOutRaw,
+        [tIn.packageHash!, tOut.packageHash!], // Use package hashes
+        `account-hash-${senderKey.accountHash().toHex()}`,
+        Date.now() + 1800000, // 30 mins
+        senderKey
+      );
+
+      const swapJson = Deploy.toJSON(swapDeploy);
+      const swapRes = await walletProvider.sign(JSON.stringify(swapJson), publicKey);
+
+      if (swapRes.cancelled) throw new Error('Swap cancelled');
+
+      let swapSignature = getSignatureHex(swapRes);
+
+      // Prepend algorithm tag if missing
+      if (swapSignature.length === 128 && publicKey) {
+        const algoTag = publicKey.substring(0, 2);
+        swapSignature = algoTag + swapSignature;
+      }
+
+      if (swapJson.approvals) swapJson.approvals.push({ signer: publicKey, signature: swapSignature });
+      else swapJson.approvals = [{ signer: publicKey, signature: swapSignature }];
+
+      if (pendingId) removeToast(pendingId);
+      showToast('pending', 'Broadcasting Swap...');
+
+      const txHash = await dex.sendDeployRaw(swapJson);
+      showToast('success', 'Swap submitted!', txHash);
+
       setAmountIn('');
       setAmountOut('');
       setQuote(null);
 
-      return swapHash;
+      return txHash;
+
     } catch (err: any) {
-      setError(err.message);
+      console.error(err);
+      if (pendingId) removeToast(pendingId);
+      showToast('error', err.message);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [connected, publicKey, quote, refreshBalances]);
+  }, [connected, publicKey, quote, dex, config, slippage, showToast, removeToast]);
 
   return {
     tokenIn,
     tokenOut,
     amountIn,
     amountOut,
+    slippage,
     quote,
     loading,
     quoting,
@@ -187,10 +310,9 @@ export function useSwap(): UseSwapResult {
     setTokenIn,
     setTokenOut,
     setAmountIn,
+    setSlippage,
     switchTokens,
     executeSwap,
     refreshQuote
   };
 }
-
-export default useSwap;

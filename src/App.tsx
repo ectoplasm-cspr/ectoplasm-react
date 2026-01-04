@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { ThemeProvider, WalletProvider } from './contexts';
+import { ThemeProvider, WalletProvider, DexProvider, ToastProvider } from './contexts';
 import { Header, Footer, ErrorBoundary, PageLoader, ScrollToTop } from './components/common';
 import './index.css';
 
@@ -19,30 +19,34 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <WalletProvider>
-          <BrowserRouter>
-            <ScrollToTop />
-            <div className="app-wrapper">
-              <Header />
-              <ErrorBoundary>
-                <Suspense fallback={<PageLoader />}>
-                  <Routes>
-                    <Route path="/" element={<Home />} />
-                    <Route path="/swap" element={<Swap />} />
-                    <Route path="/liquidity" element={<Liquidity />} />
-                    <Route path="/launchpad" element={<Launchpad />} />
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/privacy" element={<Privacy />} />
-                    <Route path="/faucet" element={<Faucet />} />
-                    <Route path="/wallet" element={<Wallet />} />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </Suspense>
-              </ErrorBoundary>
-              <Footer />
-            </div>
-          </BrowserRouter>
-        </WalletProvider>
+        <DexProvider>
+          <ToastProvider>
+            <WalletProvider>
+              <BrowserRouter>
+                <ScrollToTop />
+                <div className="app-wrapper">
+                  <Header />
+                  <ErrorBoundary>
+                    <Suspense fallback={<PageLoader />}>
+                      <Routes>
+                        <Route path="/" element={<Home />} />
+                        <Route path="/swap" element={<Swap />} />
+                        <Route path="/liquidity" element={<Liquidity />} />
+                        <Route path="/launchpad" element={<Launchpad />} />
+                        <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/privacy" element={<Privacy />} />
+                        <Route path="/faucet" element={<Faucet />} />
+                        <Route path="/wallet" element={<Wallet />} />
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </Suspense>
+                  </ErrorBoundary>
+                  <Footer />
+                </div>
+              </BrowserRouter>
+            </WalletProvider>
+          </ToastProvider>
+        </DexProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
