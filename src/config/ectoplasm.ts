@@ -38,6 +38,7 @@ export interface GasLimits {
 export interface ContractsConfig {
   factory: string;
   router: string;
+  routerPackage: string;
   lpToken: string;
   pairs: Record<string, string>;
 }
@@ -61,6 +62,7 @@ const stripHashPrefix = (s: string | undefined): string | undefined => {
 const ODRA_CONTRACTS: ContractsConfig = {
   factory: envGet('FACTORY_CONTRACT_HASH') || '',
   router: envGet('ROUTER_CONTRACT_HASH') || '',
+  routerPackage: envGet('ROUTER_PACKAGE_HASH') || '',
   lpToken: '',
   pairs: {
     ...(envGet('WCSPR_ECTO_PAIR_HASH') ? { 'WCSPR/ECTO': envGet('WCSPR_ECTO_PAIR_HASH')! } : {}),
@@ -122,6 +124,7 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
 const NATIVE_CONTRACTS: ContractsConfig = {
   factory: '',
   router: '',
+  routerPackage: '',
   lpToken: '',
   pairs: {},
 };

@@ -13,7 +13,8 @@ import {
   ExecutableDeployItem,
   Key,
   PublicKey,
-  StoredContractByHash
+  StoredContractByHash,
+  CLTypeKey
 } from 'casper-js-sdk';
 import { blake2bHex } from 'blakejs';
 import { EctoplasmConfig, TokenConfig } from '../config/ectoplasm';
@@ -722,14 +723,14 @@ class CasperServiceClass {
           })
         });
         const json = await response.json();
-        
+
         console.log('[CasperService.getPairAddress] Query result:', {
           pairKey: pairKey.substring(0, 16) + '...',
           hasError: !!json?.error,
           error: json?.error?.message,
           hasValue: !!json?.result?.stored_value
         });
-        
+
         if (json?.error) continue;
 
         const parsed = json?.result?.stored_value?.CLValue?.parsed;
@@ -892,42 +893,42 @@ class CasperServiceClass {
 
   private getOdraPairKeyCandidates(token0Hex: string, token1Hex: string): string[] {
     const candidates: string[] = [];
-    
+
     // Odra Mapping key = blake2b(index_bytes[4] ++ key.to_bytes())
     // For Factory contract, 'pairs' is the 4th field (index 3):
     // 0: fee_to, 1: fee_to_setter, 2: pair_factory, 3: pairs
     // The tuple (Address, Address) serializes as:
     // - First Address bytes (33 bytes: 1 tag byte + 32 hash bytes)
     // - Second Address bytes (33 bytes: 1 tag byte + 32 hash bytes)
-    
+
     const pairsFieldIndex = 3;
-    
+
     // Odra uses big-endian for index
     const indexBytes = new Uint8Array(4);
     new DataView(indexBytes.buffer).setUint32(0, pairsFieldIndex, false); // big-endian
-    
+
     // Casper Address serialization:
     // Tag byte: 0 for Account, 1 for Contract (package hash)
     // Token addresses are contract package hashes, so tag = 1
     const contractTag = 1;
-    
+
     const addr0 = new Uint8Array(33);
     addr0[0] = contractTag;
     addr0.set(hexToBytes(token0Hex.padStart(64, '0')), 1);
-    
+
     const addr1 = new Uint8Array(33);
     addr1[0] = contractTag;
     addr1.set(hexToBytes(token1Hex.padStart(64, '0')), 1);
-    
+
     // Combine: index_bytes ++ addr0 ++ addr1
     const combined = new Uint8Array(4 + 33 + 33);
     combined.set(indexBytes, 0);
     combined.set(addr0, 4);
     combined.set(addr1, 4 + 33);
-    
+
     const hashed = blake2bHex(combined, undefined, 32);
     candidates.push(hashed);
-    
+
     console.log('[getOdraPairKeyCandidates] Generated key:', {
       pairsFieldIndex,
       token0Hex,
@@ -938,7 +939,7 @@ class CasperServiceClass {
       combinedHex: Array.from(combined).map(b => b.toString(16).padStart(2, '0')).join(''),
       hashedKey: hashed
     });
-    
+
     return candidates;
   }
 
@@ -1139,7 +1140,8 @@ class CasperServiceClass {
 
     try {
       const accountHash = this.parsePublicKey(ownerPublicKey).accountHash().toPrefixedString();
-      const routerHash = EctoplasmConfig.contracts.router;
+      // Fix: Use routerPackage if available, as Odra Router calls as Package
+      const routerHash = EctoplasmConfig.contracts.routerPackage || EctoplasmConfig.contracts.router;
       const ownerKey = accountHash.replace('account-hash-', '');
       const spenderKey = routerHash.replace('hash-', '');
       const allowanceKey = `${ownerKey}_${spenderKey}`;
@@ -1181,7 +1183,8 @@ class CasperServiceClass {
     this.ensureInit();
 
     const publicKey = this.parsePublicKey(publicKeyHex);
-    const routerHash = EctoplasmConfig.contracts.router;
+    // Fix: Approve the package hash if available
+    const routerHash = EctoplasmConfig.contracts.routerPackage || EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.approve;
     const network = EctoplasmConfig.getNetwork();
 
@@ -1224,10 +1227,19 @@ class CasperServiceClass {
     const slippageMultiplier = BigInt(Math.floor((1 - slippagePercent / 100) * 10000));
     const amountOutMin = quote.amountOutRaw * slippageMultiplier / BigInt(10000);
 
-    const path = CLValue.newCLList(new CLTypeByteArray(32), [
-      CLValue.newCLByteArray(hexToBytes(quote.path[0])),
-      CLValue.newCLByteArray(hexToBytes(quote.path[1]))
-    ]);
+    // Fix: Odra expects a Vec<Address> which maps to List<Key>, NOT List<ByteArray>.
+    // Convert path hex strings to CLKey objects.
+    const pathKeys = quote.path.map(hash => {
+      const clean = hash.replace(/^(hash-|contract-package-)/, '').replace(/^0x/i, '');
+      // If it's a package hash, it should look like 'hash-<hex>'.
+      // If we are unsure, we assume it's a ContractPackageHash if working with Odra tokens.
+      // However, Key.newKey accepts formatted strings.
+      // EctoplasmConfig usually has 'hash-...' in packageHash.
+      const formatted = hash.startsWith('hash-') ? hash : `hash-${clean}`;
+      return CLValue.newCLKey(Key.newKey(formatted));
+    });
+
+    const path = CLValue.newCLList(CLTypeKey, pathKeys);
 
     const args = Args.fromMap({
       amount_in: CLValue.newCLUInt256(quote.amountInRaw.toString()),
@@ -1451,7 +1463,23 @@ class CasperServiceClass {
           const execResult = result.execution_info.execution_result;
           console.log('[CasperService.waitForDeploy] Execution result (2.0 format):', execResult);
 
-          // Casper 2.0 format: execution_result.Success or execution_result.Failure
+          // Casper 2.0 V2 format: execution_result.Version2.error_message (null = success)
+          if (execResult.Version2) {
+            const v2 = execResult.Version2;
+            if (v2.error_message === null || v2.error_message === undefined) {
+              console.log('[CasperService.waitForDeploy] Deploy succeeded (Version2)!');
+              return { success: true, deployHash };
+            } else {
+              console.log('[CasperService.waitForDeploy] Deploy failed (Version2):', v2.error_message);
+              return {
+                success: false,
+                deployHash,
+                error: v2.error_message || 'Transaction failed'
+              };
+            }
+          }
+
+          // Casper 2.0 legacy format: execution_result.Success or execution_result.Failure
           if (execResult.Success) {
             console.log('[CasperService.waitForDeploy] Deploy succeeded!');
             return { success: true, deployHash };
@@ -1464,6 +1492,7 @@ class CasperServiceClass {
             };
           }
         }
+
 
         // Handle legacy format (execution_results array)
         if (result?.execution_results?.length > 0) {
