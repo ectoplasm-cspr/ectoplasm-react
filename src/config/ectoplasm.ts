@@ -14,7 +14,7 @@ export interface NetworkConfig {
 
 export interface TokenConfig {
   hash: string | null;
-  packageHash: string | null;  // Contract package hash for CSPR.cloud API
+  packageHash: string | null; // Contract package hash for CSPR.cloud API
   symbol: string;
   decimals: number;
   name: string;
@@ -73,10 +73,10 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
   CSPR: {
     hash: null,
     packageHash: null,
-    symbol: 'CSPR',
+    symbol: "CSPR",
     decimals: 9,
-    name: 'Casper',
-    icon: null
+    name: "Casper",
+    icon: null,
   },
   WCSPR: {
     hash: envGet('WCSPR_CONTRACT_HASH') || null,
@@ -91,33 +91,33 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     packageHash: stripHashPrefix(envGet('ECTO_PACKAGE_HASH')) || null,
     symbol: 'ECTO',
     decimals: 18,
-    name: 'Ectoplasm Token',
-    icon: null
+    name: "Ectoplasm Token",
+    icon: null,
   },
   USDC: {
     hash: envGet('USDC_CONTRACT_HASH') || null,
     packageHash: stripHashPrefix(envGet('USDC_PACKAGE_HASH')) || null,
     symbol: 'USDC',
     decimals: 6,
-    name: 'USD Coin',
-    icon: null
+    name: "USD Coin",
+    icon: null,
   },
   WETH: {
     hash: envGet('WETH_CONTRACT_HASH') || null,
     packageHash: stripHashPrefix(envGet('WETH_PACKAGE_HASH')) || null,
     symbol: 'WETH',
     decimals: 18,
-    name: 'Wrapped Ether',
-    icon: null
+    name: "Wrapped Ether",
+    icon: null,
   },
   WBTC: {
     hash: envGet('WBTC_CONTRACT_HASH') || null,
     packageHash: stripHashPrefix(envGet('WBTC_PACKAGE_HASH')) || null,
     symbol: 'WBTC',
     decimals: 8,
-    name: 'Wrapped Bitcoin',
-    icon: null
-  }
+    name: "Wrapped Bitcoin",
+    icon: null,
+  },
 };
 
 // Native Contracts - Casper 2.0 native with init pattern (no framework)
@@ -133,10 +133,10 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
   CSPR: {
     hash: null,
     packageHash: null,
-    symbol: 'CSPR',
+    symbol: "CSPR",
     decimals: 9,
-    name: 'Casper',
-    icon: null
+    name: "Casper",
+    icon: null,
   },
   WCSPR: {
     hash: null,
@@ -151,33 +151,33 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
     packageHash: null,
     symbol: 'ECTO',
     decimals: 18,
-    name: 'Ectoplasm Token',
-    icon: null
+    name: "Ectoplasm Token",
+    icon: null,
   },
   USDC: {
     hash: null,
     packageHash: null,
     symbol: 'USDC',
     decimals: 6,
-    name: 'USD Coin',
-    icon: null
+    name: "USD Coin",
+    icon: null,
   },
   WETH: {
     hash: null,
     packageHash: null,
     symbol: 'WETH',
     decimals: 18,
-    name: 'Wrapped Ether',
-    icon: null
+    name: "Wrapped Ether",
+    icon: null,
   },
   WBTC: {
     hash: null,
     packageHash: null,
     symbol: 'WBTC',
     decimals: 8,
-    name: 'Wrapped Bitcoin',
-    icon: null
-  }
+    name: "Wrapped Bitcoin",
+    icon: null,
+  },
 };
 
 // Configuration object
@@ -193,11 +193,13 @@ export const EctoplasmConfig = {
       chainName: envGet('CHAIN_NAME') || 'casper-test',
     },
     mainnet: {
-      name: 'Casper Mainnet',
-      rpcUrl: import.meta.env.DEV ? '/_casper/mainnet' : '/api/casper/mainnet',
-      apiUrl: import.meta.env.DEV ? '/_csprcloud/mainnet' : '/api/csprcloud/mainnet',
-      chainName: 'casper',
-    }
+      name: "Casper Mainnet",
+      rpcUrl: import.meta.env.DEV ? "/_casper/mainnet" : "/api/casper/mainnet",
+      apiUrl: import.meta.env.DEV
+        ? "/_csprcloud/mainnet"
+        : "/api/csprcloud/mainnet",
+      chainName: "casper",
+    },
   } as Record<NetworkName, NetworkConfig>,
 
   // Current Network (toggle for deployment)
@@ -215,37 +217,52 @@ export const EctoplasmConfig = {
 
   set contractVersion(version: ContractVersion) {
     this._contractVersion = version;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('ectoplasm_contract_version', version);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("ectoplasm_contract_version", version);
     }
   },
 
   // Get contracts for current version
   get contracts(): ContractsConfig {
-    return this._contractVersion === 'native' ? NATIVE_CONTRACTS : ODRA_CONTRACTS;
+    return this._contractVersion === "native"
+      ? NATIVE_CONTRACTS
+      : ODRA_CONTRACTS;
   },
 
   // Get tokens for current version
   get tokens(): Record<TokenSymbol, TokenConfig> {
-    return this._contractVersion === 'native' ? NATIVE_TOKENS : ODRA_TOKENS;
+    return this._contractVersion === "native" ? NATIVE_TOKENS : ODRA_TOKENS;
   },
 
   // Version info for UI display
-  getVersionInfo(): { version: ContractVersion; label: string; description: string } {
-    return this._contractVersion === 'native'
-      ? { version: 'native', label: 'Native', description: 'Casper 2.0 native contracts' }
-      : { version: 'odra', label: 'Odra', description: 'Odra framework contracts' };
+  getVersionInfo(): {
+    version: ContractVersion;
+    label: string;
+    description: string;
+  } {
+    return this._contractVersion === "native"
+      ? {
+          version: "native",
+          label: "Native",
+          description: "Casper 2.0 native contracts",
+        }
+      : {
+          version: "odra",
+          label: "Odra",
+          description: "Odra framework contracts",
+        };
   },
 
   // Toggle between versions
   toggleVersion(): ContractVersion {
-    this.contractVersion = this._contractVersion === 'native' ? 'odra' : 'native';
+    this.contractVersion =
+      this._contractVersion === "native" ? "odra" : "native";
     return this._contractVersion;
   },
 
   // CSPR.cloud API Configuration
   csprCloud: {
-    apiKey: import.meta.env.VITE_CSPR_CLOUD_API_KEY || '',
+    apiKey: import.meta.env.VITE_CSPR_CLOUD_API_KEY || "",
   },
 
   // Swap Settings
@@ -258,10 +275,10 @@ export const EctoplasmConfig = {
 
   // Gas Limits (in motes - 1 CSPR = 1,000,000,000 motes)
   gasLimits: {
-    approve: '3000000000',
-    swap: '15000000000',
-    addLiquidity: '20000000000',
-    removeLiquidity: '15000000000',
+    approve: "3000000000",
+    swap: "15000000000",
+    addLiquidity: "20000000000",
+    removeLiquidity: "15000000000",
   } as GasLimits,
 
   // Helper to get current network config
@@ -273,18 +290,26 @@ export const EctoplasmConfig = {
   getToken(symbol: string): TokenConfig | null {
     const key = symbol?.toUpperCase() as TokenSymbol;
     const token = this.tokens[key] || null;
-    console.log('[EctoplasmConfig.getToken] symbol:', symbol, 'hash:', token?.hash);
+    console.log(
+      "[EctoplasmConfig.getToken] symbol:",
+      symbol,
+      "hash:",
+      token?.hash
+    );
     return token;
   },
 
   // Helper to find token by hash
   getTokenByHash(hash: string): TokenConfig | null {
-    return Object.values(this.tokens).find(t => t.hash === hash) || null;
+    return Object.values(this.tokens).find((t) => t.hash === hash) || null;
   },
 
   // Helper to find token by package hash (for CSPR.cloud API)
   getTokenByPackageHash(packageHash: string): TokenConfig | null {
-    return Object.values(this.tokens).find(t => t.packageHash === packageHash) || null;
+    return (
+      Object.values(this.tokens).find((t) => t.packageHash === packageHash) ||
+      null
+    );
   },
 
   // Check if CSPR.cloud API is configured
@@ -310,16 +335,26 @@ export const EctoplasmConfig = {
     console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenAConfig:', tokenAConfig?.symbol, 'tokenBConfig:', tokenBConfig?.symbol);
 
     if (!tokenAConfig || !tokenBConfig) {
-      console.log('[EctoplasmConfig.getConfiguredPairAddress] Token config not found, returning null');
+      console.log(
+        "[EctoplasmConfig.getConfiguredPairAddress] Token config not found, returning null"
+      );
       return null;
     }
 
     const key1 = `${tokenAConfig.symbol}/${tokenBConfig.symbol}`;
     const key2 = `${tokenBConfig.symbol}/${tokenAConfig.symbol}`;
-    const pairAddress = this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
-    console.log('[EctoplasmConfig.getConfiguredPairAddress] key1:', key1, 'key2:', key2, 'pairAddress:', pairAddress);
+    const pairAddress =
+      this.contracts.pairs[key1] || this.contracts.pairs[key2] || null;
+    console.log(
+      "[EctoplasmConfig.getConfiguredPairAddress] key1:",
+      key1,
+      "key2:",
+      key2,
+      "pairAddress:",
+      pairAddress
+    );
     return pairAddress;
-  }
+  },
 };
 
 export default EctoplasmConfig;
