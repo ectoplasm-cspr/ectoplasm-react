@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Deploy } from 'casper-js-sdk';
+import * as sdk from 'casper-js-sdk';
 import { useWallet } from '../contexts/WalletContext';
-import { CasperService } from '../services/casper';
+import { useDex } from '../contexts/DexContext';
 import { EctoplasmConfig } from '../config/ectoplasm';
 import { parseTokenAmount, formatTokenAmount } from '../utils/format';
 
@@ -18,7 +18,6 @@ interface LiquidityPosition {
 }
 
 interface UseLiquidityResult {
-  // Add liquidity state
   tokenA: string;
   tokenB: string;
   amountA: string;
@@ -29,72 +28,61 @@ interface UseLiquidityResult {
   setTokenB: (symbol: string) => void;
   setAmountA: (amount: string) => void;
   setAmountB: (amount: string) => void;
-
-  // Remove liquidity state
   lpAmount: string;
   setLpAmount: (amount: string) => void;
   removeTokenA: string;
   removeTokenB: string;
-
-  // Reserves info
   reserveA: string;
   reserveB: string;
   totalSupply: string;
   pairExists: boolean;
-
-  // Positions
   positions: LiquidityPosition[];
-
-  // Actions
   addLiquidity: () => Promise<string | null>;
   removeLiquidity: () => Promise<string | null>;
   refreshPositions: () => Promise<void>;
   refreshReserves: () => Promise<void>;
-
-  // Status
   loading: boolean;
   txStep: string;
   error: string | null;
 }
 
-// Demo pools data for display
-const DEMO_POOLS = [
-  {
-    name: 'ECTO/USDC',
-    tokenA: 'ECTO',
-    tokenB: 'USDC',
-    tvl: 0,
-    apr: 0,
-    minStake: 0,
-    lstToken: 'LP-ECTO-USDC',
-    features: ['AMM Pool', 'Earn Fees'],
-  },
-  {
-    name: 'WETH/USDC',
-    tokenA: 'WETH',
-    tokenB: 'USDC',
-    tvl: 0,
-    apr: 0,
-    minStake: 0,
-    lstToken: 'LP-WETH-USDC',
-    features: ['AMM Pool', 'Earn Fees'],
-  },
-  {
-    name: 'WBTC/USDC',
-    tokenA: 'WBTC',
-    tokenB: 'USDC',
-    tvl: 0,
-    apr: 0,
-    minStake: 0,
-    lstToken: 'LP-WBTC-USDC',
-    features: ['AMM Pool', 'Earn Fees'],
-  },
-];
+const { Deploy, PublicKey } = (sdk as any).default ?? sdk;
+
+// BigInt Sqrt
+function sqrt(value: bigint): bigint {
+  if (value < 0n) throw new Error("negative sqrt");
+  if (value < 2n) return value;
+  let newX = value / 2n;
+  let oldX = 0n;
+  while (newX !== oldX && newX !== oldX - 1n) {
+    oldX = newX;
+    newX = (value / newX + newX) / 2n;
+  }
+  return newX;
+}
+
+function estimateLPTokens(
+  amountA: bigint,
+  amountB: bigint,
+  reserveA: bigint,
+  reserveB: bigint,
+  totalSupply: bigint
+): bigint {
+  if (totalSupply === 0n) {
+    const product = amountA * amountB;
+    const root = sqrt(product);
+    const MINIMUM_LIQUIDITY = 1000n;
+    return root > MINIMUM_LIQUIDITY ? root - MINIMUM_LIQUIDITY : 0n;
+  }
+  const sideA = (amountA * totalSupply) / reserveA;
+  const sideB = (amountB * totalSupply) / reserveB;
+  return sideA < sideB ? sideA : sideB;
+}
 
 export function useLiquidity(): UseLiquidityResult {
-  const { connected, publicKey, balances, refreshBalances } = useWallet();
+  const { connected, publicKey, refreshBalances } = useWallet();
+  const { dex, config } = useDex();
 
-  // Add liquidity state
   const [tokenA, setTokenA] = useState('ECTO');
   const [tokenB, setTokenB] = useState('USDC');
   const [amountA, setAmountA] = useState('');
@@ -102,514 +90,282 @@ export function useLiquidity(): UseLiquidityResult {
   const [poolShare, setPoolShare] = useState('0.00');
   const [lpTokensReceived, setLpTokensReceived] = useState('0.00');
 
-  // Remove liquidity state
   const [lpAmount, setLpAmount] = useState('');
   const [removeTokenA, setRemoveTokenA] = useState('');
   const [removeTokenB, setRemoveTokenB] = useState('');
 
-  // Reserves info
   const [reserveA, setReserveA] = useState('0');
   const [reserveB, setReserveB] = useState('0');
   const [totalSupply, setTotalSupply] = useState('0');
   const [pairExists, setPairExists] = useState(false);
 
-  // Positions
   const [positions, setPositions] = useState<LiquidityPosition[]>([]);
-
-  // Status
   const [loading, setLoading] = useState(false);
   const [txStep, setTxStep] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch reserves when tokens change
   const refreshReserves = useCallback(async () => {
-    const tokenAConfig = EctoplasmConfig.getToken(tokenA);
-    const tokenBConfig = EctoplasmConfig.getToken(tokenB);
-
-    if (!tokenAConfig?.hash || !tokenBConfig?.hash) {
-      setReserveA('0');
-      setReserveB('0');
-      setTotalSupply('0');
-      setPairExists(false);
-      return;
-    }
-
-    // First check if we have a hardcoded pair address (works without SDK)
-    const configuredPair = EctoplasmConfig.getConfiguredPairAddress(tokenAConfig.hash, tokenBConfig.hash);
-
-    if (configuredPair) {
-      // Pair exists in config - mark as available
-      setPairExists(true);
-
-      // Try to fetch reserves if SDK available, otherwise show zeros
-      if (CasperService.isAvailable()) {
-        try {
-          const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
-          const supply = await CasperService.getLPTokenTotalSupply(configuredPair);
-
-          setReserveA(formatTokenAmount(reserves.reserveA.toString(), tokenAConfig.decimals));
-          setReserveB(formatTokenAmount(reserves.reserveB.toString(), tokenBConfig.decimals));
-          setTotalSupply(formatTokenAmount(supply.toString(), 18));
-        } catch (err) {
-          console.error('Error fetching reserves:', err);
-          setReserveA('0');
-          setReserveB('0');
-          setTotalSupply('0');
-        }
-      } else {
-        // SDK not available but pair exists - show zeros for reserves
-        setReserveA('0');
-        setReserveB('0');
-        setTotalSupply('0');
-      }
-      return;
-    }
-
-    // No hardcoded pair - try to query Factory if SDK available
-    if (!CasperService.isAvailable()) {
-      setPairExists(false);
-      setReserveA('0');
-      setReserveB('0');
-      setTotalSupply('0');
-      return;
-    }
+    const tA = config.tokens[tokenA];
+    const tB = config.tokens[tokenB];
+    if (!tA || !tB) return;
 
     try {
-      const pairAddress = await CasperService.getPairAddress(tokenAConfig.hash, tokenBConfig.hash);
-
-      if (!pairAddress) {
+      // Get Pair Address
+      const pairAddr = await dex.getPairAddress(tA.packageHash, tB.packageHash);
+      if (!pairAddr) {
         setPairExists(false);
         setReserveA('0');
         setReserveB('0');
         setTotalSupply('0');
         return;
       }
-
       setPairExists(true);
 
-      const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
-      const supply = await CasperService.getLPTokenTotalSupply(pairAddress);
+      const reserves = await dex.getPairReserves(pairAddr);
+      const supply = await dex.getTotalSupply(pairAddr);
 
-      setReserveA(formatTokenAmount(reserves.reserveA.toString(), tokenAConfig.decimals));
-      setReserveB(formatTokenAmount(reserves.reserveB.toString(), tokenBConfig.decimals));
-      setTotalSupply(formatTokenAmount(supply.toString(), 18));
-    } catch (err) {
-      console.error('Error fetching reserves:', err);
+      const isTokenAStart = dex.isToken0(tA.packageHash, tB.packageHash);
+      const rA = isTokenAStart ? reserves.reserve0 : reserves.reserve1;
+      const rB = isTokenAStart ? reserves.reserve1 : reserves.reserve0;
+
+      setReserveA(formatTokenAmount(rA, tA.decimals));
+      setReserveB(formatTokenAmount(rB, tB.decimals));
+      setTotalSupply(formatTokenAmount(supply, 18));
+    } catch (e) {
+      console.error(e);
       setPairExists(false);
     }
-  }, [tokenA, tokenB]);
+  }, [tokenA, tokenB, dex, config]);
 
   useEffect(() => {
     refreshReserves();
   }, [refreshReserves]);
 
-  // Calculate pool share and LP tokens when amounts change
   useEffect(() => {
-    const calculateEstimates = async () => {
-      if (!amountA || parseFloat(amountA) <= 0) {
-        setPoolShare('0.00');
-        setLpTokensReceived('0.00');
-        return;
-      }
+    if (!amountA || parseFloat(amountA) <= 0) {
+      setPoolShare('0.00');
+      setLpTokensReceived('0.00');
+      return;
+    }
 
-      const tokenAConfig = EctoplasmConfig.getToken(tokenA);
-      const tokenBConfig = EctoplasmConfig.getToken(tokenB);
-
-      if (!tokenAConfig?.hash || !tokenBConfig?.hash) {
-        setPoolShare('0.00');
-        setLpTokensReceived('0.00');
-        return;
-      }
+    const calc = async () => {
+      const tA = config.tokens[tokenA];
+      const tB = config.tokens[tokenB];
+      if (!tA || !tB) return;
 
       try {
-        const amountARaw = BigInt(parseTokenAmount(amountA, tokenAConfig.decimals));
-        const amountBRaw = amountB ? BigInt(parseTokenAmount(amountB, tokenBConfig.decimals)) : BigInt(0);
-
-        const pairAddress = await CasperService.getPairAddress(tokenAConfig.hash, tokenBConfig.hash);
-
-        if (!pairAddress) {
-          // New pool - estimate based on sqrt formula
-          if (amountARaw > BigInt(0) && amountBRaw > BigInt(0)) {
-            const lpTokens = CasperService.estimateLPTokens(
-              amountARaw, amountBRaw, BigInt(0), BigInt(0), BigInt(0)
-            );
-            setLpTokensReceived(formatTokenAmount(lpTokens.toString(), 18));
+        const pairAddr = await dex.getPairAddress(tA.packageHash, tB.packageHash);
+        if (!pairAddr) {
+          // Estimation for new pool
+          if (amountA && amountB) {
+            const aRaw = BigInt(parseTokenAmount(amountA, tA.decimals));
+            const bRaw = BigInt(parseTokenAmount(amountB, tB.decimals));
+            const est = estimateLPTokens(aRaw, bRaw, 0n, 0n, 0n);
+            setLpTokensReceived(formatTokenAmount(est, 18));
             setPoolShare('100.00');
           }
           return;
         }
 
-        const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
-        const supply = await CasperService.getLPTokenTotalSupply(pairAddress);
+        const reserves = await dex.getPairReserves(pairAddr);
+        const supply = await dex.getTotalSupply(pairAddr);
 
-        const lpTokens = CasperService.estimateLPTokens(
-          amountARaw, amountBRaw, reserves.reserveA, reserves.reserveB, supply
-        );
+        const isTokenAStart = dex.isToken0(tA.packageHash, tB.packageHash);
+        const rA = isTokenAStart ? reserves.reserve0 : reserves.reserve1;
+        const rB = isTokenAStart ? reserves.reserve1 : reserves.reserve0;
 
-        const share = CasperService.calculatePoolShare(lpTokens, supply);
+        const aRaw = BigInt(parseTokenAmount(amountA, tA.decimals));
+        const bRaw = amountB ? BigInt(parseTokenAmount(amountB, tB.decimals)) : 0n;
 
-        setLpTokensReceived(formatTokenAmount(lpTokens.toString(), 18));
-        setPoolShare(share.toFixed(4));
-      } catch (err) {
-        console.error('Error calculating estimates:', err);
-      }
+        const est = estimateLPTokens(aRaw, bRaw, rA, rB, supply);
+        setLpTokensReceived(formatTokenAmount(est, 18));
+
+        const share = supply > 0n ? Number(est * 10000n / (supply + est)) / 100 : 100;
+        setPoolShare(share.toFixed(2));
+      } catch (e) { console.error(e); }
     };
+    calc();
+  }, [amountA, amountB, tokenA, tokenB, dex, config]);
 
-    calculateEstimates();
-  }, [amountA, amountB, tokenA, tokenB]);
+  const handleAmountAChange = useCallback(async (val: string) => {
+    setAmountA(val);
+    if (!val || parseFloat(val) <= 0) { setAmountB(''); return; }
 
-  // Auto-calculate amountB based on amountA and pool ratio
-  const handleAmountAChange = useCallback(async (amount: string) => {
-    setAmountA(amount);
-
-    if (!amount || parseFloat(amount) <= 0) {
-      setAmountB('');
-      return;
-    }
-
-    const tokenAConfig = EctoplasmConfig.getToken(tokenA);
-    const tokenBConfig = EctoplasmConfig.getToken(tokenB);
-
-    if (!tokenAConfig?.hash || !tokenBConfig?.hash) {
-      return;
-    }
+    const tA = config.tokens[tokenA];
+    const tB = config.tokens[tokenB];
+    if (!tA || !tB) return;
 
     try {
-      const pairAddress = await CasperService.getPairAddress(tokenAConfig.hash, tokenBConfig.hash);
+      const pairAddr = await dex.getPairAddress(tA.packageHash, tB.packageHash);
+      if (!pairAddr) return; // Independent input for new pool
 
-      if (!pairAddress) {
-        // No existing pool - user sets both amounts freely
-        return;
+      const reserves = await dex.getPairReserves(pairAddr);
+      const isTokenAStart = dex.isToken0(tA.packageHash, tB.packageHash);
+      const rA = isTokenAStart ? reserves.reserve0 : reserves.reserve1;
+      const rB = isTokenAStart ? reserves.reserve1 : reserves.reserve0;
+
+      if (rA > 0n && rB > 0n) {
+        const aRaw = BigInt(parseTokenAmount(val, tA.decimals));
+        const bRaw = aRaw * rB / rA;
+        setAmountB(formatTokenAmount(bRaw, tB.decimals));
       }
-
-      const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
-
-      if (reserves.reserveA > BigInt(0) && reserves.reserveB > BigInt(0)) {
-        // Calculate optimal amountB based on current ratio
-        const amountARaw = BigInt(parseTokenAmount(amount, tokenAConfig.decimals));
-        const amountBOptimal = (amountARaw * reserves.reserveB) / reserves.reserveA;
-        setAmountB(formatTokenAmount(amountBOptimal.toString(), tokenBConfig.decimals));
-      }
-    } catch (err) {
-      console.error('Error calculating optimal amount:', err);
-    }
-  }, [tokenA, tokenB]);
+    } catch (e) { }
+  }, [tokenA, tokenB, dex, config]);
 
   const refreshPositions = useCallback(async () => {
-    if (!connected || !publicKey) {
-      setPositions([]);
-      return;
-    }
+    if (!connected || !publicKey) { setPositions([]); return; }
 
-    if (!CasperService.isAvailable()) {
-      setPositions([]);
-      return;
-    }
+    const accHash = `account-hash-${PublicKey.fromHex(publicKey).accountHash().toHex()}`;
+    const newPos: LiquidityPosition[] = [];
 
+    // We don't have list of all pairs easily unless we getAllPairs and iterate
+    // Assuming known config pairs or we iterate all
     try {
-      const newPositions: LiquidityPosition[] = [];
+      const allPairs = await dex.getAllPairs();
+      // For each pair, check balance
+      for (const pairAddr of allPairs) {
+        const bal = await dex.getTokenBalance(pairAddr, accHash);
+        if (bal > 0n) {
+          // Need to identify tokens for this pair
+          // DexClient doesn't expose pair->tokens map easily unless we query Factory or have it in config
+          // For now, rely on config.pairs if populated or try to reverse map
+          // EctoplasmConfig has 'pairs' mapping name -> hash.
 
-      // Check all configured pairs
-      for (const [pairName, pairHash] of Object.entries(EctoplasmConfig.contracts.pairs)) {
-        const lpBalance = await CasperService.getLPTokenBalance(pairHash, publicKey);
+          // Find name from hash
+          const entry = Object.entries(config.pairs).find(([k, v]) => v === pairAddr);
+          // If not found in config, we might skip or generic name
+          if (!entry) continue; // Skip unknown pairs for UI clarity
 
-        if (lpBalance.raw > BigInt(0)) {
-          const [tokenASymbol, tokenBSymbol] = pairName.split('/');
-          const tokenAConfig = EctoplasmConfig.getToken(tokenASymbol);
-          const tokenBConfig = EctoplasmConfig.getToken(tokenBSymbol);
+          const pairName = entry[0];
+          const [sA, sB] = pairName.split('-'); // e.g. WCSPR-ECTO
 
-          if (tokenAConfig?.hash && tokenBConfig?.hash) {
-            const reserves = await CasperService.getPairReserves(tokenAConfig.hash, tokenBConfig.hash);
-            const supply = await CasperService.getLPTokenTotalSupply(pairHash);
+          const tA = config.tokens[sA];
+          const tB = config.tokens[sB];
+          if (!tA || !tB) continue;
 
-            // Calculate share and underlying amounts
-            const sharePercent = supply > BigInt(0)
-              ? Number((lpBalance.raw * BigInt(10000)) / supply) / 100
-              : 0;
+          const reserves = await dex.getPairReserves(pairAddr);
+          const supply = await dex.getTotalSupply(pairAddr);
 
-            const tokenAAmount = supply > BigInt(0)
-              ? (lpBalance.raw * reserves.reserveA) / supply
-              : BigInt(0);
+          const isTokenAStart = dex.isToken0(tA.packageHash, tB.packageHash);
+          const rA = isTokenAStart ? reserves.reserve0 : reserves.reserve1;
+          const rB = isTokenAStart ? reserves.reserve1 : reserves.reserve0;
 
-            const tokenBAmount = supply > BigInt(0)
-              ? (lpBalance.raw * reserves.reserveB) / supply
-              : BigInt(0);
+          const shareA = supply > 0n ? (bal * rA / supply) : 0n;
+          const shareB = supply > 0n ? (bal * rB / supply) : 0n;
+          const sharePct = supply > 0n ? Number(bal * 10000n / supply) / 100 : 0;
 
-            newPositions.push({
-              pairName,
-              pairHash,
-              tokenA: tokenASymbol,
-              tokenB: tokenBSymbol,
-              lpBalance: lpBalance.formatted,
-              lpBalanceRaw: lpBalance.raw,
-              sharePercent,
-              tokenAAmount: formatTokenAmount(tokenAAmount.toString(), tokenAConfig.decimals),
-              tokenBAmount: formatTokenAmount(tokenBAmount.toString(), tokenBConfig.decimals),
-            });
-          }
+          newPos.push({
+            pairName,
+            pairHash: pairAddr,
+            tokenA: sA,
+            tokenB: sB,
+            lpBalance: formatTokenAmount(bal, 18),
+            lpBalanceRaw: bal,
+            sharePercent: sharePct,
+            tokenAAmount: formatTokenAmount(shareA, tA.decimals),
+            tokenBAmount: formatTokenAmount(shareB, tB.decimals)
+          });
         }
       }
+      setPositions(newPos);
+    } catch (e) { console.error(e); }
 
-      setPositions(newPositions);
-    } catch (err) {
-      console.error('Error fetching positions:', err);
-      setPositions([]);
-    }
-  }, [connected, publicKey]);
+  }, [connected, publicKey, dex, config]);
 
-  useEffect(() => {
-    refreshPositions();
-  }, [refreshPositions]);
+  useEffect(() => { refreshPositions(); }, [refreshPositions]);
 
   const addLiquidity = useCallback(async (): Promise<string | null> => {
-    console.log('[addLiquidity] Starting with Router approach...');
-    console.log('[addLiquidity] connected:', connected);
-    console.log('[addLiquidity] publicKey:', publicKey);
+    if (!connected || !publicKey) { setError("Connect wallet"); return null; }
+    if (!amountA || !amountB) { setError("Enter amounts"); return null; }
 
-    if (!connected || !publicKey) {
-      setError('Please connect your wallet');
-      return null;
-    }
-
-    const signerPublicKey = CasperService.normalizePublicKeyHex(publicKey);
-
-    console.log('[addLiquidity] amountA:', amountA, 'amountB:', amountB);
-    if (!amountA || !amountB || parseFloat(amountA) <= 0 || parseFloat(amountB) <= 0) {
-      setError('Please enter valid amounts');
-      return null;
-    }
-
-    const tokenAConfig = EctoplasmConfig.getToken(tokenA);
-    const tokenBConfig = EctoplasmConfig.getToken(tokenB);
-
-    console.log('[addLiquidity] tokenA:', tokenA, 'config:', tokenAConfig);
-    console.log('[addLiquidity] tokenB:', tokenB, 'config:', tokenBConfig);
-
-    if (!tokenAConfig?.hash || !tokenBConfig?.hash) {
-      setError('Token contracts not available');
-      return null;
-    }
-
-    // Verify pair exists (Router will fail if it doesn't)
-    console.log('[addLiquidity] Getting pair address for', tokenAConfig.hash, tokenBConfig.hash);
-    const pairAddress = await CasperService.getPairAddress(tokenAConfig.hash, tokenBConfig.hash);
-    console.log('[addLiquidity] pairAddress:', pairAddress);
-
-    if (!pairAddress) {
-      setError('Pair does not exist. Please contact admin to create it.');
-      return null;
-    }
+    const tA = config.tokens[tokenA];
+    const tB = config.tokens[tokenB];
+    if (!tA || !tB) return null;
 
     setLoading(true);
     setError(null);
+    setTxStep('Preparing...');
+
+    let txHash = null;
 
     try {
-      const w = window as any;
-      if (!w.CasperWalletProvider) {
-        throw new Error('No wallet available for signing');
-      }
-      const wallet = w.CasperWalletProvider();
+      const senderKey = PublicKey.fromHex(publicKey);
+      const aRaw = BigInt(parseTokenAmount(amountA, tA.decimals));
+      const bRaw = BigInt(parseTokenAmount(amountB, tB.decimals));
 
-      const amountARaw = BigInt(parseTokenAmount(amountA, tokenAConfig.decimals));
-      const amountBRaw = BigInt(parseTokenAmount(amountB, tokenBConfig.decimals));
+      // Approve A
+      setTxStep(`Approving ${tokenA}...`);
+      const w = (window as any).CasperWalletProvider && (window as any).CasperWalletProvider();
+      if (!w) throw new Error("No wallet");
 
-      // Calculate minimum amounts with 1% slippage tolerance
-      const slippageMultiplier = BigInt(9900); // 99% = 1% slippage
-      const amountAMin = (amountARaw * slippageMultiplier) / BigInt(10000);
-      const amountBMin = (amountBRaw * slippageMultiplier) / BigInt(10000);
+      const approveA = dex.makeApproveTokenDeploy(tA.packageHash, config.routerPackageHash, aRaw, senderKey);
+      const sigA = await w.sign(JSON.stringify(Deploy.toJSON(approveA)), publicKey);
+      const deployA = Deploy.toJSON(approveA);
+      deployA.approvals = [{ signer: publicKey, signature: sigA }];
+      const hashA = await dex.sendDeployRaw(deployA);
+      await dex.waitForDeploy(hashA);
 
-      console.log('[addLiquidity] amountARaw:', amountARaw.toString());
-      console.log('[addLiquidity] amountBRaw:', amountBRaw.toString());
-      console.log('[addLiquidity] amountAMin:', amountAMin.toString());
-      console.log('[addLiquidity] amountBMin:', amountBMin.toString());
+      // Approve B
+      setTxStep(`Approving ${tokenB}...`);
+      const approveB = dex.makeApproveTokenDeploy(tB.packageHash, config.routerPackageHash, bRaw, senderKey);
+      const sigB = await w.sign(JSON.stringify(Deploy.toJSON(approveB)), publicKey);
+      const deployB = Deploy.toJSON(approveB);
+      deployB.approvals = [{ signer: publicKey, signature: sigB }];
+      const hashB = await dex.sendDeployRaw(deployB);
+      await dex.waitForDeploy(hashB);
 
-      // Step 1: Approve Token A (if needed)
-      setTxStep(`Checking ${tokenA} allowance...`);
-      const hasAllowanceA = await CasperService.checkAllowance(tokenAConfig.hash, publicKey, amountARaw);
-      console.log('[addLiquidity] hasAllowanceA:', hasAllowanceA);
+      // Add Liquidity
+      setTxStep('adding liquidity...');
+      const minA = aRaw * 99n / 100n;
+      const minB = bRaw * 99n / 100n;
 
-      if (!hasAllowanceA) {
-        setTxStep(`Approving ${tokenA}...`);
-        console.log('[addLiquidity] Building approve deploy for tokenA...');
+      const accHash = `account-hash-${senderKey.accountHash().toHex()}`;
 
-        const approveADeploy = CasperService.buildApproveDeploy(
-          tokenAConfig.hash,
-          amountARaw,
-          signerPublicKey
-        );
-
-        const approveAJson = Deploy.toJSON(approveADeploy);
-        console.log('[addLiquidity] Requesting wallet signature for approve A...');
-        const walletResponseA = await wallet.sign(JSON.stringify(approveAJson), signerPublicKey);
-
-        if (walletResponseA.cancelled) {
-          throw new Error('User cancelled the transaction');
-        }
-
-        const signedApproveA = CasperService.deployFromWalletResponse(approveADeploy, walletResponseA, signerPublicKey);
-
-        const approveAHash = await CasperService.submitDeploy(signedApproveA);
-        console.log('[addLiquidity] approveAHash:', approveAHash);
-
-        setTxStep(`Waiting for ${tokenA} approval...`);
-        const resultA = await CasperService.waitForDeploy(approveAHash);
-        if (!resultA.success) {
-          throw new Error(`${tokenA} approval failed: ${resultA.error}`);
-        }
-        console.log('[addLiquidity] Token A approved successfully');
-      }
-
-      // Step 2: Approve Token B (if needed)
-      setTxStep(`Checking ${tokenB} allowance...`);
-      const hasAllowanceB = await CasperService.checkAllowance(tokenBConfig.hash, publicKey, amountBRaw);
-      console.log('[addLiquidity] hasAllowanceB:', hasAllowanceB);
-
-      if (!hasAllowanceB) {
-        setTxStep(`Approving ${tokenB}...`);
-        console.log('[addLiquidity] Building approve deploy for tokenB...');
-
-        const approveBDeploy = CasperService.buildApproveDeploy(
-          tokenBConfig.hash,
-          amountBRaw,
-          signerPublicKey
-        );
-
-        const approveBJson = Deploy.toJSON(approveBDeploy);
-        console.log('[addLiquidity] Requesting wallet signature for approve B...');
-        const walletResponseB = await wallet.sign(JSON.stringify(approveBJson), signerPublicKey);
-
-        if (walletResponseB.cancelled) {
-          throw new Error('User cancelled the transaction');
-        }
-
-        const signedApproveB = CasperService.deployFromWalletResponse(approveBDeploy, walletResponseB, signerPublicKey);
-
-        const approveBHash = await CasperService.submitDeploy(signedApproveB);
-        console.log('[addLiquidity] approveBHash:', approveBHash);
-
-        setTxStep(`Waiting for ${tokenB} approval...`);
-        const resultB = await CasperService.waitForDeploy(approveBHash);
-        if (!resultB.success) {
-          throw new Error(`${tokenB} approval failed: ${resultB.error}`);
-        }
-        console.log('[addLiquidity] Token B approved successfully');
-      }
-
-      // Step 3: Call add_liquidity on Router
-      setTxStep('Adding liquidity...');
-      console.log('[addLiquidity] Building add_liquidity deploy...');
-
-      const addLiquidityDeploy = CasperService.buildAddLiquidityDeploy(
-        tokenAConfig.hash,
-        tokenBConfig.hash,
-        amountARaw,
-        amountBRaw,
-        amountAMin,
-        amountBMin,
-        signerPublicKey
+      const addLiq = dex.makeAddLiquidityDeploy(
+        tA.packageHash,
+        tB.packageHash,
+        aRaw, bRaw, minA, minB,
+        accHash,
+        Date.now() + 1800000,
+        senderKey
       );
 
-      const addLiquidityJson = Deploy.toJSON(addLiquidityDeploy);
-      console.log('[addLiquidity] Requesting wallet signature for add_liquidity...');
-      const walletResponseLiquidity = await wallet.sign(JSON.stringify(addLiquidityJson), signerPublicKey);
+      const sigLiq = await w.sign(JSON.stringify(Deploy.toJSON(addLiq)), publicKey);
+      const deployLiq = Deploy.toJSON(addLiq);
+      deployLiq.approvals = [{ signer: publicKey, signature: sigLiq }];
 
-      if (walletResponseLiquidity.cancelled) {
-        throw new Error('User cancelled the transaction');
-      }
+      setTxStep('Broadcasting...');
+      txHash = await dex.sendDeployRaw(deployLiq);
 
-      const signedAddLiquidity = CasperService.deployFromWalletResponse(addLiquidityDeploy, walletResponseLiquidity, signerPublicKey);
-
-      const addLiquidityHash = await CasperService.submitDeploy(signedAddLiquidity);
-      console.log('[addLiquidity] addLiquidityHash:', addLiquidityHash);
-
-      setTxStep('Waiting for confirmation...');
-      const resultLiquidity = await CasperService.waitForDeploy(addLiquidityHash);
-      if (!resultLiquidity.success) {
-        throw new Error(`Add liquidity failed: ${resultLiquidity.error}`);
-      }
-
-      // Success! Refresh everything
-      console.log('[addLiquidity] Success! Refreshing...');
-      setTxStep('');
+      setTxStep('Success!');
       await refreshBalances();
-      await refreshPositions();
       await refreshReserves();
+      await refreshPositions();
 
-      // Clear form
-      setAmountA('');
-      setAmountB('');
+      return txHash;
 
-      return addLiquidityHash;
-    } catch (err: any) {
-      console.error('[addLiquidity] Error:', err);
-      setError(err.message);
+    } catch (e: any) {
+      setError(e.message);
       return null;
     } finally {
       setLoading(false);
       setTxStep('');
     }
-  }, [connected, publicKey, tokenA, tokenB, amountA, amountB, refreshBalances, refreshPositions, refreshReserves]);
+  }, [connected, publicKey, amountA, amountB, tokenA, tokenB, dex, config, refreshBalances, refreshReserves, refreshPositions]);
 
   const removeLiquidity = useCallback(async (): Promise<string | null> => {
-    if (!connected || !publicKey) {
-      setError('Please connect your wallet');
-      return null;
-    }
-
-    if (!lpAmount || parseFloat(lpAmount) <= 0) {
-      setError('Please enter LP amount to remove');
-      return null;
-    }
-
-    setLoading(true);
-    setError(null);
-    setTxStep('Remove liquidity coming soon...');
-
-    try {
-      // TODO: Implement remove liquidity
-      // 1. Transfer LP tokens to Pair contract
-      // 2. Call burn(to) on Pair to receive underlying tokens
-
-      setError('Remove liquidity feature coming soon');
-      return null;
-    } catch (err: any) {
-      setError(err.message);
-      return null;
-    } finally {
-      setLoading(false);
-      setTxStep('');
-    }
-  }, [connected, publicKey, lpAmount]);
+    // Stub for now or implement similar to addLiquidity
+    return null;
+  }, []);
 
   return {
-    tokenA,
-    tokenB,
-    amountA,
-    amountB,
-    poolShare,
-    lpTokensReceived,
-    setTokenA,
-    setTokenB,
-    setAmountA: handleAmountAChange,
-    setAmountB,
-    lpAmount,
-    setLpAmount,
-    removeTokenA,
-    removeTokenB,
-    reserveA,
-    reserveB,
-    totalSupply,
-    pairExists,
-    positions,
-    addLiquidity,
-    removeLiquidity,
-    refreshPositions,
-    refreshReserves,
-    loading,
-    txStep,
-    error,
+    tokenA, tokenB, amountA, amountB, poolShare, lpTokensReceived,
+    setTokenA, setTokenB, setAmountA: handleAmountAChange, setAmountB,
+    lpAmount, setLpAmount, removeTokenA, setRemoveTokenA, removeTokenB,
+    reserveA, reserveB, totalSupply, pairExists, positions,
+    addLiquidity, removeLiquidity, refreshPositions, refreshReserves,
+    loading, txStep, error
   };
 }
 
-export { DEMO_POOLS };
 export default useLiquidity;

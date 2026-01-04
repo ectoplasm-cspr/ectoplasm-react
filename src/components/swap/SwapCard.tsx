@@ -12,6 +12,7 @@ export function SwapCard() {
     tokenOut,
     amountIn,
     amountOut,
+    slippage,
     quote,
     loading,
     quoting,
@@ -19,6 +20,7 @@ export function SwapCard() {
     setTokenIn,
     setTokenOut,
     setAmountIn,
+    setSlippage,
     switchTokens,
     executeSwap
   } = useSwap();
@@ -27,18 +29,15 @@ export function SwapCard() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
-  const [slippage, setSlippage] = useState('0.5');
 
   const handleSwap = async () => {
     if (!connected) {
       await connect();
       return;
     }
-
-    const parsedSlippage = Number(slippage);
-    const hash = await executeSwap(Number.isFinite(parsedSlippage) ? parsedSlippage : undefined);
+    const hash = await executeSwap();
     if (hash) {
-      alert(`Swap submitted! Deploy hash: ${hash}`);
+      // alert handled by toast in hook
     }
   };
 
@@ -56,7 +55,13 @@ export function SwapCard() {
   };
 
   const canSwap = connected && quote?.valid && !loading && !quoting && parseFloat(amountIn) > 0;
-  const isDemo = quote?.demo;
+  
+  // Helpers for Price Impact Color
+  const getImpactColor = (impact: number) => {
+      if (impact < 1) return 'var(--success)';
+      if (impact < 5) return 'var(--warning)';
+      return 'var(--error)';
+  };
 
   return (
     <div className="hero-card swap-shell" aria-labelledby="swap-heading-title">
@@ -226,7 +231,7 @@ export function SwapCard() {
               className="btn primary"
               onClick={() => connect()}
             >
-              Swap
+              Connect Wallet
             </button>
           ) : (
             <button
@@ -238,7 +243,7 @@ export function SwapCard() {
             </button>
           )}
         </div>
-        <small className="muted" id="orderSummary" hidden></small>
+        
         <div className="swap-meta" aria-live="polite">
           <div className="meta-row">
             <span className="muted">Rate</span>
@@ -247,17 +252,21 @@ export function SwapCard() {
             </strong>
           </div>
           <div className="meta-row">
-            <span className="muted">Route</span>
-            <strong>Auto · {EctoplasmConfig.getNetwork().name}</strong>
-          </div>
-          <div className="meta-row">
             <span className="muted">Network fee</span>
-            <strong id="feeDisplay">~0.0030 CSPR</strong>
+            <strong id="feeDisplay">~18 CSPR</strong> 
           </div>
           <div className="meta-row">
             <span className="muted">Minimum received</span>
-            <strong id="minReceived">{quote?.minReceived || '--'}</strong>
+            <strong id="minReceived">{quote?.minReceived || '--'} {tokenOut}</strong>
           </div>
+           {quote?.priceImpact !== undefined && (
+             <div className="meta-row">
+                <span className="muted">Price Impact</span>
+                <strong style={{ color: getImpactColor(quote.priceImpact) }}>
+                    {quote.priceImpact.toFixed(2)}%
+                </strong>
+             </div>
+           )}
         </div>
       </form>
 
@@ -292,23 +301,6 @@ export function SwapCard() {
               </div>
             </div>
           </div>
-          <div className="settings-group">
-            <span className="muted">Quick amounts</span>
-            <div className="quick-amounts" aria-label="Quick amount buttons">
-              <button type="button" className="chip" onClick={() => setAmountIn('10')}>10</button>
-              <button type="button" className="chip" onClick={() => setAmountIn('100')}>100</button>
-              <button type="button" className="chip" onClick={() => setAmountIn('250')}>250</button>
-            </div>
-          </div>
-          <div className="settings-group">
-            <span className="muted">Routing snapshot</span>
-            <div className="swap-health">Optimal routing</div>
-            <div className="swap-mini-grid settings-mini-grid" aria-label="Routing details">
-              <span className="muted">Impact <strong>0.00%</strong></span>
-              <span className="muted">Fee <strong>0.25%</strong></span>
-              <span className="muted">Network <strong>{EctoplasmConfig.currentNetwork}</strong></span>
-            </div>
-          </div>
         </div>
 
         {/* Details Popout */}
@@ -323,11 +315,11 @@ export function SwapCard() {
           <dl className="swap-breakdown">
             <div>
               <dt>Minimum received</dt>
-              <dd>Respecting slippage controls</dd>
+              <dd>{quote?.minReceived || '--'} {tokenOut}</dd>
             </div>
             <div>
               <dt>Route</dt>
-              <dd>Auto (best path)</dd>
+              <dd>Auto (Direct Pool)</dd>
             </div>
             <div>
               <dt>Network</dt>
@@ -335,11 +327,13 @@ export function SwapCard() {
             </div>
             <div>
               <dt>Price impact</dt>
-              <dd><strong>{quote?.priceImpact || '0.00'}%</strong></dd>
+              <dd style={{ color: getImpactColor(quote?.priceImpact || 0) }}>
+                  {quote?.priceImpact?.toFixed(2) || '0.00'}%
+              </dd>
             </div>
             <div>
               <dt>Fee</dt>
-              <dd>0.25%</dd>
+              <dd>0.3%</dd>
             </div>
           </dl>
         </div>
@@ -356,7 +350,6 @@ export function SwapCard() {
           <div className="network-status">
             <span className="status-badge subtle">{EctoplasmConfig.getNetwork().name}</span>
             <span className="status-badge subtle">{connected ? 'Wallet connected' : 'Wallet disconnected'}</span>
-            <p className="muted small">Routing auto-selects the best path and keeps gas low.</p>
           </div>
         </div>
       </div>

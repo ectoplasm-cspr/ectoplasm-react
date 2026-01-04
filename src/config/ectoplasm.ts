@@ -82,7 +82,7 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     hash: envGet('WCSPR_CONTRACT_HASH') || null,
     packageHash: stripHashPrefix(envGet('WCSPR_PACKAGE_HASH')) || null,
     symbol: 'WCSPR',
-    decimals: 9,
+    decimals: 18,
     name: 'Wrapped CSPR',
     icon: null
   },
