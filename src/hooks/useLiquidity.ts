@@ -31,7 +31,9 @@ interface UseLiquidityResult {
   lpAmount: string;
   setLpAmount: (amount: string) => void;
   removeTokenA: string;
+  setRemoveTokenA: (symbol: string) => void;
   removeTokenB: string;
+  setRemoveTokenB: (symbol: string) => void;
   reserveA: string;
   reserveB: string;
   totalSupply: string;
@@ -361,7 +363,7 @@ export function useLiquidity(): UseLiquidityResult {
   return {
     tokenA, tokenB, amountA, amountB, poolShare, lpTokensReceived,
     setTokenA, setTokenB, setAmountA: handleAmountAChange, setAmountB,
-    lpAmount, setLpAmount, removeTokenA, setRemoveTokenA, removeTokenB,
+    lpAmount, setLpAmount, removeTokenA, setRemoveTokenA, removeTokenB, setRemoveTokenB,
     reserveA, reserveB, totalSupply, pairExists, positions,
     addLiquidity, removeLiquidity, refreshPositions, refreshReserves,
     loading, txStep, error
