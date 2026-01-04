@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { BalanceResult } from '../services/casper';
+// import { BalanceResult } from '../services/casper';
+
+export interface BalanceResult {
+  raw: bigint;
+  formatted: string;
+  decimals: number;
+}
 import { STORAGE_KEYS } from '../utils/constants';
 import { useDex } from './DexContext';
 import { formatTokenAmount } from '../utils/format';

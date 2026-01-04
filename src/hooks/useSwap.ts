@@ -51,7 +51,7 @@ export function useSwap(): UseSwapResult {
   const [tokenOut, setTokenOut] = useState('ECTO');
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('');
-  const [slippage, setSlippage] = useState('0.5'); // Default 0.5%
+  const [slippage, setSlippage] = useState('5.0'); // Default 5.0% for testnet
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [quoting, setQuoting] = useState(false);
@@ -235,9 +235,11 @@ export function useSwap(): UseSwapResult {
         else approveJson.approvals = [{ signer: publicKey, signature: approveSignature }];
 
         if (pendingId) removeToast(pendingId);
-        showToast('pending', 'Step 1/2: Broadcasting Approval...');
+        pendingId = Date.now().toString();
+        showToast('pending', 'Step 1/2: Waiting for approval confirmation...');
 
         const approveHash = await dex.sendDeployRaw(approveJson);
+        console.log(`📡 Waiting for approval deploy: ${approveHash}`);
         await dex.waitForDeploy(approveHash);
       }
 
