@@ -89,15 +89,36 @@ export function Faucet() {
       
       const signedResult = await casperWallet.sign(JSON.stringify(deployJson), publicKey);
 
-      if (signedResult?.cancelled) {
+      if (signedResult.cancelled) {
         throw new Error('Transaction cancelled by user');
+      }
+
+      // Helper to extract signature as hex (borrowed from useSwap)
+      const getSignatureHex = (providerRes: any) => {
+        if (typeof providerRes === 'string') return providerRes;
+        if (providerRes.signature) {
+          const sig = providerRes.signature;
+          if (typeof sig === 'string') return sig;
+          if (typeof sig === 'object') {
+            return Object.values(sig).map((b: any) => Number(b).toString(16).padStart(2, '0')).join('');
+          }
+        }
+        return '';
+      };
+
+      let signature = getSignatureHex(signedResult);
+
+      // Prepend algorithm tag if missing (Ed25519='01', Secp256k1='02')
+      if (signature.length === 128 && publicKey) {
+        const algoTag = publicKey.substring(0, 2);
+        signature = algoTag + signature;
       }
 
       // Attach signature
       if (deployJson.approvals) {
-           deployJson.approvals.push({ signer: publicKey, signature: signedResult });
+           deployJson.approvals.push({ signer: publicKey, signature: signature });
       } else {
-           deployJson.approvals = [{ signer: publicKey, signature: signedResult }];
+           deployJson.approvals = [{ signer: publicKey, signature: signature }];
       }
 
       if (pendingId) removeToast(pendingId);

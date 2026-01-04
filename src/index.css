@@ -676,6 +676,228 @@ body.swap-page .site-footer{display:none}
 .launchpad .status-badge{background:rgba(119,240,248,0.08);border-color:rgba(119,240,248,0.25);color:#7ef0e8}
 
 /* ============================================================================
+   12.b LAUNCHPAD LIBRARY
+   ============================================================================ */
+
+.token-library {
+  background: var(--card);
+  border-radius: 16px;
+  border: 1px solid rgba(232,255,249,0.08);
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+}
+
+.table-controls {
+  padding: 16px;
+  border-bottom: 1px solid rgba(232,255,249,0.06);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.search-field {
+  flex: 1;
+  min-width: 240px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(232,255,249,0.04);
+  border: 1px solid rgba(232,255,249,0.08);
+  color: inherit;
+  transition: all 0.2s ease;
+}
+
+.search-input:focus {
+  background: rgba(232,255,249,0.08);
+  border-color: rgba(119,240,248,0.3);
+  outline: none;
+}
+
+.filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-filters {
+  display: flex;
+  gap: 6px;
+  background: rgba(232,255,249,0.04);
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(232,255,249,0.06);
+}
+
+.status-filters .pill {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 12px;
+  transition: all 0.2s;
+}
+
+.status-filters .pill:hover {
+  color: #e8fff9;
+}
+
+.status-filters .pill.filled {
+  background: var(--glass);
+  color: #e8fff9;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.sort-select {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(232, 255, 249, 0.04);
+  border: 1px solid rgba(232, 255, 249, 0.08);
+  color: var(--muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.result-count {
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+/* Token Table Grid Layout */
+.token-table {
+  width: 100%;
+}
+
+.token-table-head {
+  display: grid;
+  grid-template-columns: 2fr 100px 100px 140px 120px; /* Name, Symbol, 24h, Liq, Status */
+  padding: 12px 20px;
+  background: rgba(232,255,249,0.02);
+  border-bottom: 1px solid rgba(232,255,249,0.06);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  gap: 16px;
+}
+
+.token-table-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.token-table-row {
+  display: grid;
+  grid-template-columns: 2fr 100px 100px 140px 120px;
+  padding: 14px 20px;
+  align-items: center;
+  border-bottom: 1px solid rgba(232,255,249,0.04);
+  transition: background 0.15s ease;
+  gap: 16px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.token-table-row:hover {
+  background: rgba(119,240,248,0.04);
+}
+
+.token-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.token-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(119,240,248,0.2), rgba(76,245,199,0.2));
+  color: #7ef0e8;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 1rem;
+  border: 1px solid rgba(119,240,248,0.3);
+}
+
+.token-info strong {
+  display: block;
+  line-height: 1.2;
+}
+
+.col.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.text-success { color: #4cf5c7; }
+.text-danger { color: #ff6b6b; }
+
+.status-live { color: #4cf5c7; background: rgba(76,245,199,0.1); border-color: rgba(76,245,199,0.2); }
+.status-launching { color: #ffe600; background: rgba(255,230,0,0.1); border-color: rgba(255,230,0,0.2); }
+.status-ended { color: var(--muted); background: rgba(255,255,255,0.05); }
+
+.token-empty {
+  padding: 40px;
+  text-align: center;
+}
+
+/* Mobile Responsive Table */
+@media (max-width: 768px) {
+  .token-table-head {
+    display: none; /* Hide headers on mobile */
+  }
+
+  .token-table-row {
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 16px;
+    align-items: start;
+    position: relative;
+  }
+
+  .col.name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .col.symbol {
+    display: none; /* Hide symbol pill on mobile as it's in name */
+  }
+
+  .col.status {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .col.liquidity {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .col.liquidity::before {
+    content: "Liq: ";
+  }
+
+  .col.change {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+}
+
+/* ============================================================================
    13. DASHBOARD & GAMIFICATION
    ============================================================================ */
 

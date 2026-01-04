@@ -429,7 +429,7 @@ export class DexClient {
 
             const cleanTokenHash = this.normalizeContractKey(tokenPackageHash);
 
-            // Get Contract State
+            // Get Contract State to find the entry point
             const contractData: any = await this.rpcRequest('state_get_item', {
                 state_root_hash: stateRootHash,
                 key: cleanTokenHash,
@@ -437,34 +437,27 @@ export class DexClient {
             });
 
             const namedKeys = contractData.stored_value?.Contract?.named_keys;
+            const entryPointsURef = namedKeys?.find((k: any) => k.name === '__entry_points')?.key;
 
-            // Find allowances dictionary
-            let allowancesURef = namedKeys?.find((k: any) => k.name === 'allowances')?.key;
-
-            if (!allowancesURef) {
-                console.warn(`No 'allowances' dictionary found for ${tokenPackageHash}`);
+            if (!entryPointsURef) {
+                console.warn(`No entry points found for ${tokenPackageHash}`);
                 return 0n;
             }
 
-            // Allowance key format: owner_account_hash + spender_package_hash
-            const rawOwner = ownerAccountHash.replace('account-hash-', '');
-            const rawSpender = spenderPackageHash.replace('hash-', '').replace('contract-package-wasm', '');
+            // Call the allowance method on the contract
+            // The allowance method signature: allowance(owner: Address, spender: Address) -> U256
+            const result = await this.rpcRequest('query_global_state', {
+                state_root_hash: stateRootHash,
+                key: cleanTokenHash,
+                path: ['allowance']
+            });
 
-            // Try different key formats
-            const keyCandidates = [
-                `${rawOwner}_${rawSpender}`,
-                `account-hash-${rawOwner}_hash-${rawSpender}`,
-                `${ownerAccountHash}_${spenderPackageHash}`,
-            ];
+            // For now, return 0 as we need to properly invoke the contract method
+            // This requires using state_get_dictionary_item with the correct key format
+            // which Odra generates from the (Address, Address) tuple
 
-            for (const key of keyCandidates) {
-                await this.sleep(100);
-                const val = await this.queryDictionaryValue(stateRootHash, allowancesURef, key);
-                if (val !== null) {
-                    return val;
-                }
-            }
-
+            // TODO: Implement proper contract method invocation or use the correct Odra key format
+            console.warn('getAllowance: Contract method invocation not yet implemented, returning 0');
             return 0n;
         } catch (e) {
             console.error(`Error fetching allowance for ${tokenPackageHash}:`, e);
@@ -826,24 +819,35 @@ export class DexClient {
     /**
      * Wait for a deploy to complete
      */
-    async waitForDeploy(deployHash: string, maxTries: number = 60, sleepMs: number = 5000): Promise<boolean> {
+    async waitForDeploy(deployHash: string, maxTries: number = 24, sleepMs: number = 5000): Promise<boolean> {
+        console.log(`⏳ Waiting for deploy ${deployHash}...`);
         for (let i = 0; i < maxTries; i++) {
             try {
-                const result = await this.rpcClient.getDeployInfo(deployHash);
+                // Use getDeploy instead of getDeployInfo for newer SDK
+                const result = await this.rpcClient.getDeploy(deployHash);
+                // console.log('Deploy Info:', JSON.stringify(result, null, 2));
+
+                // Based on logs, the structure is executionInfo -> executionResult
                 if (result.executionInfo) {
                     const error = result.executionInfo.executionResult?.errorMessage;
                     if (error) {
-                        console.error(`Deploy failed: ${error}`);
+                        throw new Error(`Deploy failed: ${error}`);
                     }
+                    console.log(`✅ Deploy ${deployHash} completed successfully`);
                     return true;
                 }
-            } catch (e) {
-                // Deploy not found yet
+                console.log(`⏳ Attempt ${i + 1}/${maxTries}: Deploy not yet executed...`);
+            } catch (e: any) {
+                // If it's a deploy execution error, rethrow it
+                if (e.message?.includes('Deploy failed:')) {
+                    throw e;
+                }
+                // Otherwise, deploy not found yet, continue polling
+                console.log(`⏳ Attempt ${i + 1}/${maxTries}: ${e.message || 'Deploy not found'}`);
             }
             await this.sleep(sleepMs);
         }
-        console.error('Deploy timed out');
-        return false;
+        throw new Error(`Deploy ${deployHash} timed out after ${(maxTries * sleepMs) / 1000}s`);
     }
 
     // ============ Private Helpers ============
@@ -924,6 +928,8 @@ export class DexClient {
             throw new Error(`RPC Error: ${result.error.code} - ${result.error.message}`);
         }
 
-        return result.result.deploy_hash;
+        const deployHash = result.result.deploy_hash;
+        console.log(`✅ Deploy submitted successfully. Hash: ${deployHash}`);
+        return deployHash;
     }
 }
