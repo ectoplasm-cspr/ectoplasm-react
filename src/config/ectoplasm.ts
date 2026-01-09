@@ -79,6 +79,8 @@ const ODRA_CONTRACTS: ContractsConfig = {
     "hash-464e54c4e050fb995ac7bb3a9a4eef08f0b9010daf490ceb062ab5f7a8149263",
   router:
     "hash-1e5163f46dbc5aed9abe53bbf346aaa8d7239510dd32e6a06cfc9b16cce1de99",
+  routerPackage:
+    "hash-446c0c4bf16e3876d2061f726a39c56a07d652791d711514197233811d48d017",
   lpToken:
     "hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7",
   pairs: {
@@ -161,6 +163,8 @@ const NATIVE_CONTRACTS: ContractsConfig = {
     "hash-464e54c4e050fb995ac7bb3a9a4eef08f0b9010daf490ceb062ab5f7a8149263",
   router:
     "hash-1e5163f46dbc5aed9abe53bbf346aaa8d7239510dd32e6a06cfc9b16cce1de99",
+  routerPackage:
+    "hash-446c0c4bf16e3876d2061f726a39c56a07d652791d711514197233811d48d017",
   lpToken:
     "hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7",
   pairs: {
