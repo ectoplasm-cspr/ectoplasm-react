@@ -33,6 +33,12 @@ export interface GasLimits {
   swap: string;
   addLiquidity: string;
   removeLiquidity: string;
+  // Launchpad gas limits
+  createLaunch: string;
+  buyTokens: string;
+  sellTokens: string;
+  claimRefund: string;
+  graduate: string;
 }
 
 export interface ContractsConfig {
@@ -41,6 +47,12 @@ export interface ContractsConfig {
   routerPackage: string;
   lpToken: string;
   pairs: Record<string, string>;
+}
+
+export interface LaunchpadConfig {
+  controller: string;
+  tokenFactory: string;
+  isDeployed: boolean;
 }
 
 export type NetworkName = 'testnet' | 'mainnet';
@@ -279,7 +291,22 @@ export const EctoplasmConfig = {
     swap: "15000000000",
     addLiquidity: "20000000000",
     removeLiquidity: "15000000000",
+    // Launchpad gas limits
+    createLaunch: "80000000000", // 80 CSPR (deploys token + curve)
+    buyTokens: "10000000000",   // 10 CSPR
+    sellTokens: "10000000000",  // 10 CSPR
+    claimRefund: "5000000000",  // 5 CSPR
+    graduate: "50000000000",    // 50 CSPR (creates DEX pair)
   } as GasLimits,
+
+  // Launchpad Configuration
+  launchpad: {
+    controller: envGet('LAUNCHPAD_CONTROLLER_HASH') || '',
+    tokenFactory: envGet('LAUNCHPAD_TOKEN_FACTORY_HASH') || '',
+    get isDeployed(): boolean {
+      return !!(this.controller && this.tokenFactory);
+    },
+  } as LaunchpadConfig,
 
   // Helper to get current network config
   getNetwork(): NetworkConfig {

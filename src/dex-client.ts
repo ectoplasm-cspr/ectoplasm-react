@@ -53,6 +53,55 @@ export interface DexConfig {
     pairs: {
         [name: string]: string; // e.g., "WCSPR-ECTO": "hash-..."
     };
+    // Launchpad contracts (optional - may not be deployed)
+    launchpad?: {
+        controllerHash: string;
+        tokenFactoryHash: string;
+    };
+}
+
+// ============ Launchpad Types ============
+
+export type CurveType = 'linear' | 'sigmoid' | 'steep';
+
+export interface LaunchParams {
+    name: string;
+    symbol: string;
+    curveType: CurveType;
+    graduationThreshold?: bigint; // Optional override (in motes)
+    creatorFeeBps?: number;       // Optional override (basis points)
+    deadlineDays?: number;        // Optional override
+    promoBudget?: bigint;         // Marketing budget (in motes)
+    description?: string;
+    website?: string;
+    twitter?: string;
+}
+
+export interface LaunchInfo {
+    id: number;
+    tokenHash: string;
+    curveHash: string;
+    creator: string;
+    name: string;
+    symbol: string;
+    curveType: CurveType;
+    status: 'active' | 'graduated' | 'refunding';
+    createdAt: number;
+}
+
+export interface CurveState {
+    tokenHash: string;
+    curveType: CurveType;
+    csprRaised: bigint;
+    tokensSold: bigint;
+    totalSupply: bigint;
+    graduationThreshold: bigint;
+    currentPrice: bigint;
+    progress: number; // 0-100%
+    status: 'active' | 'graduated' | 'refunding';
+    deadline: number; // Unix timestamp
+    promoBudget: bigint;
+    promoReleased: bigint;
 }
 
 // ============ DEX Client ============
@@ -812,6 +861,298 @@ export class DexClient {
             '5000000000', // 5 CSPR
             senderPublicKey
         );
+    }
+
+    // ============ Launchpad Functions ============
+
+    /**
+     * Check if launchpad contracts are configured
+     */
+    isLaunchpadConfigured(): boolean {
+        return !!(this.config.launchpad?.controllerHash && this.config.launchpad?.tokenFactoryHash);
+    }
+
+    /**
+     * Create a new token launch via TokenFactory
+     */
+    makeCreateLaunchDeploy(
+        params: LaunchParams,
+        senderPublicKey: typeof PublicKey,
+    ): any {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            throw new Error('Launchpad contracts not configured');
+        }
+
+        // Map curve type to u8
+        const curveTypeMap: Record<CurveType, number> = {
+            'linear': 0,
+            'sigmoid': 1,
+            'steep': 2,
+        };
+
+        const argsMap: Record<string, any> = {
+            name: CLValue.newCLString(params.name),
+            symbol: CLValue.newCLString(params.symbol),
+            curve_type: CLValue.newCLUint8(curveTypeMap[params.curveType]),
+            graduation_threshold: params.graduationThreshold
+                ? CLValue.newCLOption({ type: 'U512', value: CLValue.newCLUInt512(params.graduationThreshold.toString()) })
+                : CLValue.newCLOption({ type: 'U512', value: null }),
+            creator_fee_bps: params.creatorFeeBps !== undefined
+                ? CLValue.newCLOption({ type: 'U64', value: CLValue.newCLUint64(BigInt(params.creatorFeeBps)) })
+                : CLValue.newCLOption({ type: 'U64', value: null }),
+            deadline_days: params.deadlineDays !== undefined
+                ? CLValue.newCLOption({ type: 'U64', value: CLValue.newCLUint64(BigInt(params.deadlineDays)) })
+                : CLValue.newCLOption({ type: 'U64', value: null }),
+            promo_budget: params.promoBudget
+                ? CLValue.newCLOption({ type: 'U512', value: CLValue.newCLUInt512(params.promoBudget.toString()) })
+                : CLValue.newCLOption({ type: 'U512', value: null }),
+            description: params.description
+                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.description) })
+                : CLValue.newCLOption({ type: 'String', value: null }),
+            website: params.website
+                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.website) })
+                : CLValue.newCLOption({ type: 'String', value: null }),
+            twitter: params.twitter
+                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.twitter) })
+                : CLValue.newCLOption({ type: 'String', value: null }),
+        };
+
+        const args = Args.fromMap(argsMap);
+
+        return this.buildDeploy(
+            this.config.launchpad.tokenFactoryHash,
+            'create_launch',
+            args,
+            '80000000000', // 80 CSPR
+            senderPublicKey
+        );
+    }
+
+    /**
+     * Buy tokens from bonding curve (with CSPR payment)
+     */
+    makeBuyTokensDeploy(
+        curveHash: string,
+        csprAmount: bigint,
+        minTokensOut: bigint,
+        senderPublicKey: typeof PublicKey,
+    ): any {
+        const args = Args.fromMap({
+            min_tokens_out: CLValue.newCLUInt256(minTokensOut.toString()),
+        });
+
+        // Note: For payable entry points, the payment amount IS the CSPR being sent
+        // The contract will receive the payment amount as the purchase amount
+        return this.buildDeploy(
+            curveHash,
+            'buy',
+            args,
+            csprAmount.toString(), // This is the payment/purchase amount
+            senderPublicKey
+        );
+    }
+
+    /**
+     * Sell tokens back to bonding curve
+     */
+    makeSellTokensDeploy(
+        curveHash: string,
+        tokenAmount: bigint,
+        minCsprOut: bigint,
+        senderPublicKey: typeof PublicKey,
+    ): any {
+        const args = Args.fromMap({
+            amount: CLValue.newCLUInt256(tokenAmount.toString()),
+            min_cspr_out: CLValue.newCLUInt512(minCsprOut.toString()),
+        });
+
+        return this.buildDeploy(
+            curveHash,
+            'sell',
+            args,
+            '10000000000', // 10 CSPR gas
+            senderPublicKey
+        );
+    }
+
+    /**
+     * Claim refund from a failed/expired launch
+     */
+    makeClaimRefundDeploy(
+        curveHash: string,
+        senderPublicKey: typeof PublicKey,
+    ): any {
+        const args = Args.fromMap({});
+
+        return this.buildDeploy(
+            curveHash,
+            'claim_refund',
+            args,
+            '5000000000', // 5 CSPR gas
+            senderPublicKey
+        );
+    }
+
+    /**
+     * Graduate a launch to DEX (when threshold is reached)
+     */
+    makeGraduateDeploy(
+        curveHash: string,
+        senderPublicKey: typeof PublicKey,
+    ): any {
+        const args = Args.fromMap({});
+
+        return this.buildDeploy(
+            curveHash,
+            'graduate',
+            args,
+            '50000000000', // 50 CSPR gas (creates DEX pair)
+            senderPublicKey
+        );
+    }
+
+    /**
+     * Get launch count from TokenFactory
+     */
+    async getLaunchCount(): Promise<number> {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            return 0;
+        }
+
+        try {
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const factoryHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: factoryHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys;
+            const launchCountURef = namedKeys?.find((k: any) => k.name === 'launch_count')?.key;
+
+            if (!launchCountURef) return 0;
+
+            const res = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: launchCountURef,
+                path: []
+            });
+
+            if (res.stored_value?.CLValue?.parsed) {
+                return Number(res.stored_value.CLValue.parsed);
+            }
+            return 0;
+        } catch (e) {
+            console.error('Error fetching launch count:', e);
+            return 0;
+        }
+    }
+
+    /**
+     * Get launches (paginated)
+     */
+    async getLaunches(offset: number = 0, limit: number = 20): Promise<LaunchInfo[]> {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            return [];
+        }
+
+        // For now, return empty array - real implementation would query the contract
+        // This would require calling get_launches entry point or reading from dictionaries
+        console.warn('getLaunches: Full implementation requires contract deployment');
+        return [];
+    }
+
+    /**
+     * Get bonding curve state
+     */
+    async getCurveState(curveHash: string): Promise<CurveState | null> {
+        try {
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const cleanHash = this.normalizeContractKey(curveHash);
+
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: cleanHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys;
+            if (!namedKeys) return null;
+
+            // Read key storage values
+            const getURefValue = async (name: string): Promise<any> => {
+                const uref = namedKeys.find((k: any) => k.name === name)?.key;
+                if (!uref) return null;
+                const res = await this.rpcRequest('state_get_item', {
+                    state_root_hash: stateRootHash,
+                    key: uref,
+                    path: []
+                });
+                return res.stored_value?.CLValue?.parsed;
+            };
+
+            const tokenHash = await getURefValue('token_hash') || '';
+            const curveType = await getURefValue('curve_type') || 0;
+            const csprRaised = BigInt(await getURefValue('cspr_raised') || 0);
+            const tokensSold = BigInt(await getURefValue('tokens_sold') || 0);
+            const totalSupply = BigInt(await getURefValue('total_supply') || 0);
+            const graduationThreshold = BigInt(await getURefValue('graduation_threshold') || 0);
+            const status = await getURefValue('status') || 0;
+            const deadline = Number(await getURefValue('deadline') || 0);
+            const promoBudget = BigInt(await getURefValue('promo_budget') || 0);
+            const promoReleased = BigInt(await getURefValue('promo_released') || 0);
+
+            // Calculate current price (simplified - actual would call get_price entry point)
+            const progress = graduationThreshold > 0n
+                ? Number((csprRaised * 100n) / graduationThreshold)
+                : 0;
+
+            const curveTypeMap: Record<number, CurveType> = { 0: 'linear', 1: 'sigmoid', 2: 'steep' };
+            const statusMap: Record<number, 'active' | 'graduated' | 'refunding'> = {
+                0: 'active', 1: 'graduated', 2: 'refunding'
+            };
+
+            return {
+                tokenHash: typeof tokenHash === 'string' ? tokenHash : '',
+                curveType: curveTypeMap[curveType] || 'linear',
+                csprRaised,
+                tokensSold,
+                totalSupply,
+                graduationThreshold,
+                currentPrice: 0n, // Would need to call contract
+                progress,
+                status: statusMap[status] || 'active',
+                deadline,
+                promoBudget,
+                promoReleased,
+            };
+        } catch (e) {
+            console.error('Error fetching curve state:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Get quote for buying tokens
+     */
+    async getQuoteBuy(curveHash: string, csprAmount: bigint): Promise<bigint> {
+        // This would call the contract's get_quote_buy entry point
+        // For now, return 0 - real implementation after deployment
+        console.warn('getQuoteBuy: Requires contract deployment for accurate quotes');
+        return 0n;
+    }
+
+    /**
+     * Get quote for selling tokens
+     */
+    async getQuoteSell(curveHash: string, tokenAmount: bigint): Promise<bigint> {
+        // This would call the contract's get_quote_sell entry point
+        console.warn('getQuoteSell: Requires contract deployment for accurate quotes');
+        return 0n;
     }
 
     // ============ Utility Functions ============

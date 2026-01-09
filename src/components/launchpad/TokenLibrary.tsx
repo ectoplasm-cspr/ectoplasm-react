@@ -84,11 +84,14 @@ export function TokenLibrary({
           {tokens.map((token) => (
             <TokenCard
               key={token.id}
+              id={token.id}
               name={token.name}
               symbol={token.symbol}
               change24h={token.change24h}
               liquidity={token.liquidity}
               status={token.status}
+              curveHash={token.curveHash}
+              progress={token.progress}
             />
           ))}
 

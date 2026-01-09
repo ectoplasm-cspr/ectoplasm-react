@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useLaunchpad } from '../../hooks/useLaunchpad';
 import { useWallet } from '../../contexts/WalletContext';
 import { Modal } from '../common/Modal';
@@ -17,7 +17,11 @@ export function TokenCreationForm({ isOpen, onClose }: TokenCreationFormProps) {
     isCreating,
     createError,
     resetForm,
+    isContractsDeployed,
   } = useLaunchpad();
+
+  // Toggle for showing advanced options
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,6 +150,102 @@ export function TokenCreationForm({ isOpen, onClose }: TokenCreationFormProps) {
             />
           </div>
         </div>
+
+        {/* Advanced Options Toggle */}
+        <div className="advanced-toggle">
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? 'Hide advanced options' : 'Show advanced options'}
+          </button>
+        </div>
+
+        {/* Advanced Options (Collapsible) */}
+        {showAdvanced && (
+          <div className="advanced-options">
+            <h4>Advanced Configuration</h4>
+            <p className="form-hint muted">
+              Override platform defaults. Leave blank to use recommended settings.
+            </p>
+
+            <div className="form-grid">
+              {/* Graduation Threshold */}
+              <div className="form-field">
+                <label htmlFor="graduationThreshold">
+                  Graduation Threshold (CSPR)
+                </label>
+                <input
+                  id="graduationThreshold"
+                  type="number"
+                  min="1000"
+                  max="1000000"
+                  step="1000"
+                  value={formData.graduationThreshold || ''}
+                  onChange={(e) => setFormData({
+                    graduationThreshold: e.target.value ? parseInt(e.target.value) : undefined
+                  })}
+                  placeholder="50000 (default)"
+                />
+                <span className="form-hint">
+                  CSPR needed to graduate to DEX
+                </span>
+              </div>
+
+              {/* Creator Fee */}
+              <div className="form-field">
+                <label htmlFor="creatorFeeBps">
+                  Creator Fee (basis points)
+                </label>
+                <input
+                  id="creatorFeeBps"
+                  type="number"
+                  min="0"
+                  max="500"
+                  step="10"
+                  value={formData.creatorFeeBps || ''}
+                  onChange={(e) => setFormData({
+                    creatorFeeBps: e.target.value ? parseInt(e.target.value) : undefined
+                  })}
+                  placeholder="0 (default)"
+                />
+                <span className="form-hint">
+                  100 = 1%, max 5%
+                </span>
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="deadlineDays">
+                Deadline (days)
+              </label>
+              <input
+                id="deadlineDays"
+                type="number"
+                min="7"
+                max="90"
+                step="1"
+                value={formData.deadlineDays || ''}
+                onChange={(e) => setFormData({
+                  deadlineDays: e.target.value ? parseInt(e.target.value) : undefined
+                })}
+                placeholder="30 (default)"
+              />
+              <span className="form-hint">
+                Days until refunds are enabled if not graduated (7-90 days)
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Contract Status Notice */}
+        {!isContractsDeployed && (
+          <div className="form-notice">
+            <strong>Demo Mode:</strong> Launchpad contracts not yet deployed.
+            Token creation will be simulated.
+          </div>
+        )}
 
         {/* Error Display */}
         {createError && (

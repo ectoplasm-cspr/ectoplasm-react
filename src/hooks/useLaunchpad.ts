@@ -1,18 +1,25 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useWallet } from '../contexts/WalletContext';
+import { useDex } from '../contexts/DexContext';
+import { EctoplasmConfig } from '../config/ectoplasm';
+import type { LaunchParams, LaunchInfo, CurveType } from '../dex-client';
 
 // Token creation form state
 export interface TokenFormData {
   projectName: string;
   symbol: string;
-  bondingCurve: 'linear' | 'sigmoid' | 'steep';
+  bondingCurve: CurveType;
   promoBudget: number;
   description?: string;
   website?: string;
   twitter?: string;
+  // Advanced options (optional overrides)
+  graduationThreshold?: number; // In CSPR
+  creatorFeeBps?: number;       // Basis points (100 = 1%)
+  deadlineDays?: number;
 }
 
-// Mock token for the library
+// Token for the library (extended LaunchInfo with UI-specific fields)
 export interface LaunchpadToken {
   id: string;
   name: string;
@@ -24,9 +31,13 @@ export interface LaunchpadToken {
   creator: string;
   bondingCurve: string;
   marketCap?: number;
+  // Contract data (when available)
+  tokenHash?: string;
+  curveHash?: string;
+  progress?: number;
 }
 
-// Generate mock tokens for demo
+// Generate mock tokens for demo (when contracts not deployed)
 function generateMockTokens(count: number): LaunchpadToken[] {
   const names = [
     'Ghost Cats', 'Moon Pepe', 'Casper Doge', 'Spectral Inu', 'Phantom Shiba',
@@ -62,6 +73,7 @@ function generateMockTokens(count: number): LaunchpadToken[] {
       creator: `0x${Math.random().toString(16).slice(2, 10)}...`,
       bondingCurve: curves[Math.floor(Math.random() * 3)],
       marketCap: Math.floor(Math.random() * 1000000) + 50000,
+      progress: Math.floor(Math.random() * 100),
     };
   });
 }
@@ -70,6 +82,9 @@ function generateMockTokens(count: number): LaunchpadToken[] {
 const MOCK_TOKENS = generateMockTokens(50);
 
 interface UseLaunchpadResult {
+  // Contract status
+  isContractsDeployed: boolean;
+
   // Token creation
   formData: TokenFormData;
   setFormData: (data: Partial<TokenFormData>) => void;
@@ -81,12 +96,16 @@ interface UseLaunchpadResult {
   // Token library
   tokens: LaunchpadToken[];
   filteredTokens: LaunchpadToken[];
+  isLoadingTokens: boolean;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   sortBy: 'growth' | 'liquidity' | 'recent';
   setSortBy: (sort: 'growth' | 'liquidity' | 'recent') => void;
   statusFilter: 'all' | 'live' | 'launching' | 'ended';
   setStatusFilter: (status: 'all' | 'live' | 'launching' | 'ended') => void;
+
+  // Refresh
+  refreshTokens: () => Promise<void>;
 }
 
 const initialFormData: TokenFormData = {
@@ -100,7 +119,11 @@ const initialFormData: TokenFormData = {
 };
 
 export function useLaunchpad(): UseLaunchpadResult {
-  const { connected, publicKey } = useWallet();
+  const { connected, publicKey, activePublicKey, signDeploy } = useWallet();
+  const { dexClient } = useDex();
+
+  // Check if contracts are deployed
+  const isContractsDeployed = EctoplasmConfig.launchpad.isDeployed;
 
   // Token creation state
   const [formData, setFormDataState] = useState<TokenFormData>(initialFormData);
@@ -108,7 +131,8 @@ export function useLaunchpad(): UseLaunchpadResult {
   const [createError, setCreateError] = useState<string | null>(null);
 
   // Token library state
-  const [tokens] = useState<LaunchpadToken[]>(MOCK_TOKENS);
+  const [tokens, setTokens] = useState<LaunchpadToken[]>(MOCK_TOKENS);
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'growth' | 'liquidity' | 'recent'>('recent');
   const [statusFilter, setStatusFilter] = useState<'all' | 'live' | 'launching' | 'ended'>('all');
@@ -122,8 +146,59 @@ export function useLaunchpad(): UseLaunchpadResult {
     setCreateError(null);
   }, []);
 
+  // Fetch real tokens when contracts are deployed
+  const refreshTokens = useCallback(async () => {
+    if (!isContractsDeployed || !dexClient) {
+      // Use mock data when contracts not deployed
+      setTokens(MOCK_TOKENS);
+      return;
+    }
+
+    setIsLoadingTokens(true);
+    try {
+      const launches = await dexClient.getLaunches(0, 100);
+
+      if (launches.length === 0) {
+        // No launches yet, show mock data with notice
+        console.log('No launches found, using mock data');
+        setTokens(MOCK_TOKENS);
+        return;
+      }
+
+      // Convert LaunchInfo to LaunchpadToken
+      const launchpadTokens: LaunchpadToken[] = launches.map((launch) => ({
+        id: launch.id.toString(),
+        name: launch.name,
+        symbol: launch.symbol,
+        change24h: 0, // Would need price history
+        liquidity: 0, // Would need to fetch from curve
+        status: launch.status === 'active' ? 'live'
+              : launch.status === 'graduated' ? 'ended'
+              : 'launching',
+        createdAt: new Date(launch.createdAt),
+        creator: launch.creator,
+        bondingCurve: launch.curveType.charAt(0).toUpperCase() + launch.curveType.slice(1),
+        tokenHash: launch.tokenHash,
+        curveHash: launch.curveHash,
+      }));
+
+      setTokens(launchpadTokens);
+    } catch (err) {
+      console.error('Failed to fetch launches:', err);
+      // Fallback to mock data on error
+      setTokens(MOCK_TOKENS);
+    } finally {
+      setIsLoadingTokens(false);
+    }
+  }, [isContractsDeployed, dexClient]);
+
+  // Load tokens on mount
+  useEffect(() => {
+    refreshTokens();
+  }, [refreshTokens]);
+
   const createToken = useCallback(async (): Promise<string | null> => {
-    if (!connected || !publicKey) {
+    if (!connected || !publicKey || !activePublicKey) {
       setCreateError('Please connect your wallet');
       return null;
     }
@@ -142,34 +217,71 @@ export function useLaunchpad(): UseLaunchpadResult {
     setCreateError(null);
 
     try {
-      // Simulate token creation delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Check if contracts are deployed
+      if (!isContractsDeployed || !dexClient) {
+        // Demo mode - simulate token creation
+        console.log('Demo mode: Token creation (contracts not deployed):', {
+          ...formData,
+          creator: publicKey,
+        });
 
-      // In a real implementation, this would:
-      // 1. Deploy a new CEP-18 token contract
-      // 2. Set up bonding curve parameters
-      // 3. Initialize liquidity pool
-      // 4. Register with launchpad contract
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const demoHash = `demo-${Date.now().toString(16)}`;
+        resetForm();
+        return demoHash;
+      }
 
-      console.log('Token creation (demo):', {
-        ...formData,
-        creator: publicKey,
-      });
+      // Real contract call
+      const params: LaunchParams = {
+        name: formData.projectName,
+        symbol: formData.symbol.toUpperCase(),
+        curveType: formData.bondingCurve,
+        promoBudget: BigInt(formData.promoBudget) * BigInt(1_000_000_000), // Convert CSPR to motes
+        description: formData.description,
+        website: formData.website,
+        twitter: formData.twitter,
+      };
 
-      // Return demo deploy hash
-      const demoHash = `demo-${Date.now().toString(16)}`;
+      // Add optional overrides if provided
+      if (formData.graduationThreshold !== undefined) {
+        params.graduationThreshold = BigInt(formData.graduationThreshold) * BigInt(1_000_000_000);
+      }
+      if (formData.creatorFeeBps !== undefined) {
+        params.creatorFeeBps = formData.creatorFeeBps;
+      }
+      if (formData.deadlineDays !== undefined) {
+        params.deadlineDays = formData.deadlineDays;
+      }
 
-      // Reset form on success
+      // Build and sign the deploy
+      const deploy = dexClient.makeCreateLaunchDeploy(params, activePublicKey);
+      const signedDeploy = await signDeploy(deploy);
+
+      if (!signedDeploy) {
+        throw new Error('Failed to sign deploy');
+      }
+
+      // Send the deploy
+      const deployHash = await dexClient.sendDeploy(signedDeploy);
+      console.log('Launch creation deploy sent:', deployHash);
+
+      // Wait for deployment (optional - could also return immediately)
+      await dexClient.waitForDeploy(deployHash);
+
       resetForm();
 
-      return demoHash;
+      // Refresh token list
+      await refreshTokens();
+
+      return deployHash;
     } catch (err: any) {
+      console.error('Token creation failed:', err);
       setCreateError(err.message || 'Failed to create token');
       return null;
     } finally {
       setIsCreating(false);
     }
-  }, [connected, publicKey, formData, resetForm]);
+  }, [connected, publicKey, activePublicKey, formData, resetForm, isContractsDeployed, dexClient, signDeploy, refreshTokens]);
 
   // Filter and sort tokens
   const filteredTokens = useMemo(() => {
@@ -207,6 +319,7 @@ export function useLaunchpad(): UseLaunchpadResult {
   }, [tokens, searchQuery, sortBy, statusFilter]);
 
   return {
+    isContractsDeployed,
     formData,
     setFormData,
     resetForm,
@@ -215,12 +328,14 @@ export function useLaunchpad(): UseLaunchpadResult {
     createError,
     tokens,
     filteredTokens,
+    isLoadingTokens,
     searchQuery,
     setSearchQuery,
     sortBy,
     setSortBy,
     statusFilter,
     setStatusFilter,
+    refreshTokens,
   };
 }
 
