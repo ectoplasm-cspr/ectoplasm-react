@@ -153,12 +153,16 @@ export function LaunchpadToken() {
       {/* Header */}
       <section className="section">
         <div className="container">
-          <Link to="/launchpad" className="back-link">&larr; Back to Launchpad</Link>
+          <Link to="/launchpad" className="back-link">
+            <span>←</span> Back to Launchpad
+          </Link>
 
           <div className="token-header">
             <div className="token-info">
               <h1>Token Details</h1>
-              <p className="muted">Curve: {curveHash?.slice(0, 16)}...{curveHash?.slice(-8)}</p>
+              <p className="muted">
+                <span className="hash-label">Curve:</span> {curveHash?.slice(0, 12)}...{curveHash?.slice(-8)}
+              </p>
             </div>
             <div className="token-status">
               <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
