@@ -301,8 +301,8 @@ export const EctoplasmConfig = {
 
   // Launchpad Configuration
   launchpad: {
-    controller: envGet('LAUNCHPAD_CONTROLLER_HASH') || '',
-    tokenFactory: envGet('LAUNCHPAD_TOKEN_FACTORY_HASH') || '',
+    controller: envGet('LAUNCHPAD_CONTROLLER_PACKAGE_HASH') || envGet('LAUNCHPAD_CONTROLLER_HASH') || '',
+    tokenFactory: envGet('LAUNCHPAD_TOKEN_FACTORY_PACKAGE_HASH') || envGet('LAUNCHPAD_TOKEN_FACTORY_HASH') || '',
     get isDeployed(): boolean {
       return !!(this.controller && this.tokenFactory);
     },
