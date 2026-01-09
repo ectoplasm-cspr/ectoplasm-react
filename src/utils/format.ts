@@ -50,6 +50,13 @@ export function csprToMotes(cspr: number | string): string {
  */
 export function formatTokenAmount(rawAmount: string | bigint, decimals: number): string {
   const value = typeof rawAmount === 'string' ? BigInt(rawAmount) : rawAmount;
+
+  // Use Number division if safe (mimics frontend-react logic)
+  if (value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    return (Number(value) / (10 ** decimals)).toFixed(4);
+  }
+
+  // Fallback for huge numbers
   const divisor = BigInt(10 ** decimals);
   const whole = value / divisor;
   const fraction = value % divisor;

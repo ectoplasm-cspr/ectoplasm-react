@@ -33,11 +33,18 @@ export interface GasLimits {
   swap: string;
   addLiquidity: string;
   removeLiquidity: string;
+  // Launchpad gas limits
+  createLaunch: string;
+  buyTokens: string;
+  sellTokens: string;
+  claimRefund: string;
+  graduate: string;
 }
 
 export interface ContractsConfig {
   factory: string;
   router: string;
+  routerPackage: string;
   lpToken: string;
   pairs: Record<string, string>;
   // LST (Liquid Staking Token) contracts
@@ -45,9 +52,26 @@ export interface ContractsConfig {
   stakingManager?: string;
 }
 
-export type NetworkName = "testnet" | "mainnet";
-export type TokenSymbol = "CSPR" | "ECTO" | "USDC" | "WETH" | "WBTC" | "sCSPR";
-export type ContractVersion = "odra" | "native";
+export interface LaunchpadConfig {
+  controller: string;
+  tokenFactory: string;
+  isDeployed: boolean;
+}
+
+export type NetworkName = 'testnet' | 'mainnet';
+export type TokenSymbol = 'CSPR' | 'WCSPR' | 'ECTO' | 'USDC' | 'WETH' | 'WBTC' | 'sCSPR';
+export type ContractVersion = 'odra' | 'native';
+
+const ENV = import.meta.env as any;
+const envGet = (key: string): string | undefined => {
+  const v = ENV?.[key] ?? ENV?.[`VITE_${key}`];
+  return typeof v === 'string' && v.length ? v : undefined;
+};
+
+const stripHashPrefix = (s: string | undefined): string | undefined => {
+  if (!s) return undefined;
+  return s.startsWith('hash-') ? s.slice('hash-'.length) : s;
+};
 
 // Odra Contracts - Built with Odra framework (DEPLOYED)
 const ODRA_CONTRACTS: ContractsConfig = {
@@ -75,6 +99,14 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     decimals: 9,
     name: "Casper",
     icon: null,
+  },
+  WCSPR: {
+    hash: envGet('WCSPR_CONTRACT_HASH') || null,
+    packageHash: stripHashPrefix(envGet('WCSPR_PACKAGE_HASH')) || null,
+    symbol: 'WCSPR',
+    decimals: 18,
+    name: 'Wrapped CSPR',
+    icon: null
   },
   ECTO: {
     hash: "hash-1a4edcb64811ae6ce8468fc23f562aa210e26f2b53f7e2968a3bfdaf0702d5c8",
@@ -150,6 +182,14 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
     name: "Casper",
     icon: null,
   },
+  WCSPR: {
+    hash: null,
+    packageHash: null,
+    symbol: 'WCSPR',
+    decimals: 9,
+    name: 'Wrapped CSPR',
+    icon: null
+  },
   ECTO: {
     hash: "hash-1a4edcb64811ae6ce8468fc23f562aa210e26f2b53f7e2968a3bfdaf0702d5c8",
     packageHash:
@@ -204,12 +244,10 @@ export const EctoplasmConfig = {
   // In production: Uses Vercel API routes (/api/casper and /api/csprcloud)
   networks: {
     testnet: {
-      name: "Casper Testnet",
-      rpcUrl: import.meta.env.DEV ? "/_casper/testnet" : "/api/casper/testnet",
-      apiUrl: import.meta.env.DEV
-        ? "/_csprcloud/testnet"
-        : "/api/csprcloud/testnet",
-      chainName: "casper-test",
+      name: 'Casper Testnet',
+      rpcUrl: import.meta.env.DEV ? '/_casper/testnet' : '/api/casper/testnet',
+      apiUrl: import.meta.env.DEV ? '/_csprcloud/testnet' : '/api/csprcloud/testnet',
+      chainName: envGet('CHAIN_NAME') || 'casper-test',
     },
     mainnet: {
       name: "Casper Mainnet",
@@ -222,14 +260,13 @@ export const EctoplasmConfig = {
   } as Record<NetworkName, NetworkConfig>,
 
   // Current Network (toggle for deployment)
-  currentNetwork: "testnet" as NetworkName,
+  currentNetwork: (envGet('ECTOPLASM_NETWORK') as NetworkName) || 'testnet' as NetworkName,
 
   // Contract Version - 'odra' (Odra framework) or 'native' (Casper 2.0 native)
   // Stored in localStorage for persistence
-  _contractVersion:
-    (typeof localStorage !== "undefined"
-      ? (localStorage.getItem("ectoplasm_contract_version") as ContractVersion)
-      : null) || ("native" as ContractVersion),
+  _contractVersion: (typeof localStorage !== 'undefined'
+    ? localStorage.getItem('ectoplasm_contract_version') as ContractVersion
+    : null) || ((envGet('ROUTER_PACKAGE_HASH') || envGet('FACTORY_PACKAGE_HASH')) ? 'odra' : 'native') as ContractVersion,
 
   get contractVersion(): ContractVersion {
     return this._contractVersion;
@@ -299,7 +336,22 @@ export const EctoplasmConfig = {
     swap: "15000000000",
     addLiquidity: "20000000000",
     removeLiquidity: "15000000000",
+    // Launchpad gas limits
+    createLaunch: "80000000000", // 80 CSPR (deploys token + curve)
+    buyTokens: "10000000000",   // 10 CSPR
+    sellTokens: "10000000000",  // 10 CSPR
+    claimRefund: "5000000000",  // 5 CSPR
+    graduate: "50000000000",    // 50 CSPR (creates DEX pair)
   } as GasLimits,
+
+  // Launchpad Configuration
+  launchpad: {
+    controller: envGet('LAUNCHPAD_CONTROLLER_PACKAGE_HASH') || envGet('LAUNCHPAD_CONTROLLER_HASH') || '',
+    tokenFactory: envGet('LAUNCHPAD_TOKEN_FACTORY_PACKAGE_HASH') || envGet('LAUNCHPAD_TOKEN_FACTORY_HASH') || '',
+    get isDeployed(): boolean {
+      return !!(this.controller && this.tokenFactory);
+    },
+  } as LaunchpadConfig,
 
   // Helper to get current network config
   getNetwork(): NetworkConfig {
@@ -349,20 +401,10 @@ export const EctoplasmConfig = {
 
   // Get configured pair address
   getConfiguredPairAddress(tokenA: string, tokenB: string): string | null {
-    console.log(
-      "[EctoplasmConfig.getConfiguredPairAddress] tokenA:",
-      tokenA,
-      "tokenB:",
-      tokenB
-    );
-    const tokenAConfig = this.getTokenByHash(tokenA);
-    const tokenBConfig = this.getTokenByHash(tokenB);
-    console.log(
-      "[EctoplasmConfig.getConfiguredPairAddress] tokenAConfig:",
-      tokenAConfig?.symbol,
-      "tokenBConfig:",
-      tokenBConfig?.symbol
-    );
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenA:', tokenA, 'tokenB:', tokenB);
+    const tokenAConfig = this.getTokenByHash(tokenA) || this.getTokenByPackageHash(tokenA);
+    const tokenBConfig = this.getTokenByHash(tokenB) || this.getTokenByPackageHash(tokenB);
+    console.log('[EctoplasmConfig.getConfiguredPairAddress] tokenAConfig:', tokenAConfig?.symbol, 'tokenBConfig:', tokenBConfig?.symbol);
 
     if (!tokenAConfig || !tokenBConfig) {
       console.log(

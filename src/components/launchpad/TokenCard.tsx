@@ -1,20 +1,27 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { formatCompact } from '../../utils/format';
 
 interface TokenCardProps {
+  id: string;
   name: string;
   symbol: string;
   change24h: number;
   liquidity: number;
   status: 'live' | 'launching' | 'ended';
+  curveHash?: string;
+  progress?: number;
 }
 
 export function TokenCard({
+  id,
   name,
   symbol,
   change24h,
   liquidity,
   status,
+  curveHash,
+  progress,
 }: TokenCardProps) {
   const getStatusClass = () => {
     switch (status) {
@@ -47,8 +54,11 @@ export function TokenCard({
     return `${sign}${change.toFixed(2)}%`;
   };
 
+  // Use curveHash for real tokens, or id for mock tokens
+  const linkTo = curveHash ? `/launchpad/${curveHash}` : `/launchpad/${id}`;
+
   return (
-    <div className="token-table-row" role="row">
+    <Link to={linkTo} className="token-table-row clickable" role="row">
       <div className="col name" role="cell">
         <div className="token-info">
           <div className="token-avatar">
@@ -75,8 +85,13 @@ export function TokenCard({
         <span className={`status-badge ${getStatusClass()}`}>
           {getStatusLabel()}
         </span>
+        {progress !== undefined && status === 'live' && (
+          <div className="progress-mini">
+            <div className="progress-mini-bar" style={{ width: `${progress}%` }}></div>
+          </div>
+        )}
       </div>
-    </div>
+    </Link>
   );
 }
 

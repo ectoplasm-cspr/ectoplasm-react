@@ -1,10 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '../contexts/WalletContext';
-import { CasperService, BalanceResult } from '../services/casper';
-import { EctoplasmConfig } from '../config/ectoplasm';
+import { useDex } from '../contexts/DexContext';
+import { formatTokenAmount } from '../utils/format';
+import * as sdk from 'casper-js-sdk';
+
+const { PublicKey } = (sdk as any).default ?? sdk;
+
+export interface BalanceResult {
+  raw: bigint;
+  formatted: string;
+  decimals: number;
+}
 
 export function useTokenBalance(symbol: string) {
   const { publicKey, connected, balances } = useWallet();
+  const { dex, config } = useDex();
+
   const [balance, setBalance] = useState<BalanceResult>({
     raw: BigInt(0),
     formatted: '0',
@@ -13,7 +24,7 @@ export function useTokenBalance(symbol: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Get balance from context if available
+  // Sync with context balances immediately
   useEffect(() => {
     if (balances[symbol.toUpperCase()]) {
       setBalance(balances[symbol.toUpperCase()]);
@@ -30,28 +41,30 @@ export function useTokenBalance(symbol: string) {
     setError(null);
 
     try {
-      const token = EctoplasmConfig.getToken(symbol);
-      if (!token) {
-        throw new Error(`Unknown token: ${symbol}`);
-      }
-
-      let result: BalanceResult;
       if (symbol.toUpperCase() === 'CSPR') {
-        result = await CasperService.getNativeBalance(publicKey);
-      } else if (token.hash) {
-        result = await CasperService.getTokenBalance(token.hash, publicKey);
+        const raw = await dex.getCSPRBalance(publicKey);
+        setBalance({ raw, formatted: formatTokenAmount(raw, 9), decimals: 9 });
       } else {
-        result = { raw: BigInt(0), formatted: '0', decimals: token.decimals };
-      }
+        const token = config.tokens[symbol.toUpperCase()];
+        if (!token) throw new Error(`Unknown token ${symbol}`);
 
-      setBalance(result);
+        let accountHash = '';
+        try {
+          accountHash = 'account-hash-' + PublicKey.fromHex(publicKey).accountHash().toHex();
+        } catch (e) { } // handle error
+
+        if (accountHash) {
+          const raw = await dex.getTokenBalance(token.contractHash, accountHash);
+          setBalance({ raw, formatted: formatTokenAmount(raw, token.decimals), decimals: token.decimals });
+        }
+      }
     } catch (err: any) {
       setError(err.message);
       console.error(`Error fetching ${symbol} balance:`, err);
     } finally {
       setLoading(false);
     }
-  }, [publicKey, connected, symbol]);
+  }, [publicKey, connected, symbol, dex, config]);
 
   return {
     balance: balance.formatted,

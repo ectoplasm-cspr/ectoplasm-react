@@ -6,12 +6,14 @@ export function Launchpad() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const {
     filteredTokens,
+    isLoadingTokens,
     searchQuery,
     setSearchQuery,
     sortBy,
     setSortBy,
     statusFilter,
     setStatusFilter,
+    refreshTokens,
   } = useLaunchpad();
 
   return (
@@ -64,6 +66,7 @@ export function Launchpad() {
 
           <TokenLibrary
             tokens={filteredTokens}
+            isLoading={isLoadingTokens}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             sortBy={sortBy}
@@ -147,6 +150,7 @@ export function Launchpad() {
       <TokenCreationForm
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
+        onTokenCreated={refreshTokens}
       />
     </main>
   );
