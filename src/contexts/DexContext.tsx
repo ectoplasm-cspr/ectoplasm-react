@@ -19,6 +19,14 @@ const getDexConfig = (): DexConfig => {
         }
     }
 
+    // Build launchpad config if available
+    const launchpadConfig = EctoplasmConfig.launchpad.isDeployed
+        ? {
+            controllerHash: EctoplasmConfig.launchpad.controller,
+            tokenFactoryHash: EctoplasmConfig.launchpad.tokenFactory,
+        }
+        : undefined;
+
     return {
         nodeUrl: network.rpcUrl,
         chainName: network.chainName,
@@ -26,7 +34,8 @@ const getDexConfig = (): DexConfig => {
         routerContractHash: EctoplasmConfig.contracts.router,
         factoryHash: EctoplasmConfig.contracts.factory,
         tokens,
-        pairs: EctoplasmConfig.contracts.pairs
+        pairs: EctoplasmConfig.contracts.pairs,
+        launchpad: launchpadConfig,
     };
 };
 
