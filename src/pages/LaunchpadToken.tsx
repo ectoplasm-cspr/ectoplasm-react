@@ -23,7 +23,7 @@ function formatTokens(amount: bigint): string {
 export function LaunchpadToken() {
   const { curveHash } = useParams<{ curveHash: string }>();
   const { connected, publicKey } = useWallet();
-  const { dexClient } = useDex();
+  const { dex: dexClient } = useDex();
 
   const {
     curveState,

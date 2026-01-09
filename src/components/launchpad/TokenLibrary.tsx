@@ -4,6 +4,7 @@ import { LaunchpadToken } from '../../hooks/useLaunchpad';
 
 interface TokenLibraryProps {
   tokens: LaunchpadToken[];
+  isLoading: boolean;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   sortBy: 'growth' | 'liquidity' | 'recent';
@@ -14,6 +15,7 @@ interface TokenLibraryProps {
 
 export function TokenLibrary({
   tokens,
+  isLoading,
   searchQuery,
   onSearchChange,
   sortBy,
@@ -66,7 +68,7 @@ export function TokenLibrary({
         </div>
 
         <span className="muted result-count">
-          Showing {tokens.length} tokens
+          {isLoading ? 'Loading...' : `Showing ${tokens.length} tokens`}
         </span>
       </div>
 
@@ -81,23 +83,32 @@ export function TokenLibrary({
         </div>
 
         <div className="token-table-body" role="rowgroup">
-          {tokens.map((token) => (
-            <TokenCard
-              key={token.id}
-              id={token.id}
-              name={token.name}
-              symbol={token.symbol}
-              change24h={token.change24h}
-              liquidity={token.liquidity}
-              status={token.status}
-              curveHash={token.curveHash}
-              progress={token.progress}
-            />
-          ))}
-
-          {tokens.length === 0 && (
+          {isLoading ? (
+            <div className="token-loading">
+              <div className="loading-spinner" />
+              <p className="muted">Loading launches from blockchain...</p>
+            </div>
+          ) : tokens.length > 0 ? (
+            tokens.map((token) => (
+              <TokenCard
+                key={token.id}
+                id={token.id}
+                name={token.name}
+                symbol={token.symbol}
+                change24h={token.change24h}
+                liquidity={token.liquidity}
+                status={token.status}
+                curveHash={token.curveHash}
+                progress={token.progress}
+              />
+            ))
+          ) : (
             <div className="token-empty">
-              <p className="muted">No tokens found matching your search.</p>
+              <p className="muted">
+                {searchQuery
+                  ? 'No tokens found matching your search.'
+                  : 'No tokens launched yet. Be the first to launch!'}
+              </p>
             </div>
           )}
         </div>

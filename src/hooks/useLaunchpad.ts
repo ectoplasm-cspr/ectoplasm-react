@@ -37,50 +37,6 @@ export interface LaunchpadToken {
   progress?: number;
 }
 
-// Generate mock tokens for demo (when contracts not deployed)
-function generateMockTokens(count: number): LaunchpadToken[] {
-  const names = [
-    'Ghost Cats', 'Moon Pepe', 'Casper Doge', 'Spectral Inu', 'Phantom Shiba',
-    'Ecto Frog', 'Spirit Bear', 'Vapor Wave', 'Mist Token', 'Shadow Punk',
-    'Cyber Ghost', 'Neon Spectre', 'Plasma Coin', 'Astral Meme', 'Cosmic Ape',
-    'Stellar Doge', 'Nebula Cat', 'Galaxy Pepe', 'Quantum Shib', 'Atomic Frog',
-    'Solar Flare', 'Luna Ghost', 'Mars Meme', 'Venus Inu', 'Jupiter Punk',
-    'Saturn Ring', 'Neptune Wave', 'Pluto Doge', 'Comet Coin', 'Meteor Meme',
-    'Aurora Ape', 'Borealis Bear', 'Frost Token', 'Ice Shiba', 'Snow Pepe',
-    'Crystal Cat', 'Diamond Doge', 'Ruby Frog', 'Emerald Inu', 'Sapphire Punk',
-    'Golden Ghost', 'Silver Spectre', 'Bronze Bear', 'Platinum Pepe', 'Titanium Token',
-    'Carbon Coin', 'Neon Ninja', 'Cyber Samurai', 'Digital Dragon', 'Virtual Viking'
-  ];
-
-  const statuses: Array<'live' | 'launching' | 'ended'> = ['live', 'launching', 'ended'];
-  const curves = ['Linear', 'Sigmoid', 'Steep'];
-
-  return Array.from({ length: count }, (_, i) => {
-    const name = names[i % names.length];
-    const words = name.split(' ');
-    const symbol = words.length > 1
-      ? words.map(w => w[0]).join('').toUpperCase()
-      : name.slice(0, 4).toUpperCase();
-
-    return {
-      id: `token-${i + 1}`,
-      name,
-      symbol: symbol + (i >= names.length ? Math.floor(i / names.length) : ''),
-      change24h: (Math.random() - 0.3) * 100, // -30% to +70%
-      liquidity: Math.floor(Math.random() * 500000) + 10000,
-      status: statuses[Math.floor(Math.random() * 3)],
-      createdAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-      creator: `0x${Math.random().toString(16).slice(2, 10)}...`,
-      bondingCurve: curves[Math.floor(Math.random() * 3)],
-      marketCap: Math.floor(Math.random() * 1000000) + 50000,
-      progress: Math.floor(Math.random() * 100),
-    };
-  });
-}
-
-// Pre-generate mock tokens
-const MOCK_TOKENS = generateMockTokens(50);
-
 interface UseLaunchpadResult {
   // Contract status
   isContractsDeployed: boolean;
@@ -138,8 +94,8 @@ export function useLaunchpad(): UseLaunchpadResult {
   const [createError, setCreateError] = useState<string | null>(null);
 
   // Token library state
-  const [tokens, setTokens] = useState<LaunchpadToken[]>(MOCK_TOKENS);
-  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+  const [tokens, setTokens] = useState<LaunchpadToken[]>([]);
+  const [isLoadingTokens, setIsLoadingTokens] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'growth' | 'liquidity' | 'recent'>('recent');
   const [statusFilter, setStatusFilter] = useState<'all' | 'live' | 'launching' | 'ended'>('all');
@@ -153,24 +109,18 @@ export function useLaunchpad(): UseLaunchpadResult {
     setCreateError(null);
   }, []);
 
-  // Fetch real tokens when contracts are deployed
+  // Fetch real tokens from contracts
   const refreshTokens = useCallback(async () => {
     if (!isContractsDeployed || !dexClient) {
-      // Use mock data when contracts not deployed
-      setTokens(MOCK_TOKENS);
+      // Contracts not deployed - show empty state
+      setTokens([]);
+      setIsLoadingTokens(false);
       return;
     }
 
     setIsLoadingTokens(true);
     try {
       const launches = await dexClient.getLaunches(0, 100);
-
-      if (launches.length === 0) {
-        // No launches yet, show mock data with notice
-        console.log('No launches found, using mock data');
-        setTokens(MOCK_TOKENS);
-        return;
-      }
 
       // Convert LaunchInfo to LaunchpadToken
       const launchpadTokens: LaunchpadToken[] = launches.map((launch) => ({
@@ -187,13 +137,15 @@ export function useLaunchpad(): UseLaunchpadResult {
         bondingCurve: launch.curveType.charAt(0).toUpperCase() + launch.curveType.slice(1),
         tokenHash: launch.tokenHash,
         curveHash: launch.curveHash,
+        progress: 0, // Would need to calculate from curve state
+        marketCap: 0, // Would need price data
       }));
 
+      console.log('[refreshTokens] Fetched launches:', launchpadTokens.length);
       setTokens(launchpadTokens);
     } catch (err) {
       console.error('Failed to fetch launches:', err);
-      // Fallback to mock data on error
-      setTokens(MOCK_TOKENS);
+      setTokens([]);
     } finally {
       setIsLoadingTokens(false);
     }
@@ -277,8 +229,9 @@ export function useLaunchpad(): UseLaunchpadResult {
 
       resetForm();
 
-      // Refresh token list
-      await refreshTokens();
+      // Wait a moment for blockchain state to propagate
+      // This ensures the new token appears when parent refreshes the list
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
       return deployHash;
     } catch (err: any) {
@@ -288,7 +241,7 @@ export function useLaunchpad(): UseLaunchpadResult {
     } finally {
       setIsCreating(false);
     }
-  }, [connected, publicKey, formData, resetForm, isContractsDeployed, dexClient, signDeploy, refreshTokens]);
+  }, [connected, publicKey, formData, resetForm, isContractsDeployed, dexClient, signDeploy]);
 
   // Filter and sort tokens
   const filteredTokens = useMemo(() => {

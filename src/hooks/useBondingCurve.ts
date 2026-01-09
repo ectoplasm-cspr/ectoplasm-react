@@ -60,8 +60,8 @@ function getMockCurveState(curveHash: string): CurveState {
 }
 
 export function useBondingCurve(curveHash: string | null): UseBondingCurveResult {
-  const { connected, publicKey, activePublicKey, signDeploy } = useWallet();
-  const { dexClient } = useDex();
+  const { connected, publicKey, signDeploy } = useWallet();
+  const { dex: dexClient } = useDex();
 
   // State
   const [curveState, setCurveState] = useState<CurveState | null>(null);
@@ -128,7 +128,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
     csprAmount: bigint,
     slippageBps: number = 100 // 1% default slippage
   ): Promise<string | null> => {
-    if (!curveHash || !connected || !activePublicKey || !dexClient) {
+    if (!curveHash || !connected || !publicKey || !dexClient) {
       setTxError('Wallet not connected or curve not selected');
       return null;
     }
@@ -154,7 +154,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
         curveHash,
         csprAmount,
         minTokensOut,
-        activePublicKey
+        publicKey
       );
       const signedDeploy = await signDeploy(deploy);
 
@@ -179,14 +179,14 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
     } finally {
       setIsPending(false);
     }
-  }, [curveHash, connected, activePublicKey, dexClient, signDeploy, refresh]);
+  }, [curveHash, connected, publicKey, dexClient, signDeploy, refresh]);
 
   // Sell tokens
   const sellTokens = useCallback(async (
     tokenAmount: bigint,
     slippageBps: number = 100 // 1% default slippage
   ): Promise<string | null> => {
-    if (!curveHash || !connected || !activePublicKey || !dexClient) {
+    if (!curveHash || !connected || !publicKey || !dexClient) {
       setTxError('Wallet not connected or curve not selected');
       return null;
     }
@@ -212,7 +212,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
         curveHash,
         tokenAmount,
         minCsprOut,
-        activePublicKey
+        publicKey
       );
       const signedDeploy = await signDeploy(deploy);
 
@@ -237,11 +237,11 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
     } finally {
       setIsPending(false);
     }
-  }, [curveHash, connected, activePublicKey, dexClient, signDeploy, refresh]);
+  }, [curveHash, connected, publicKey, dexClient, signDeploy, refresh]);
 
   // Claim refund
   const claimRefund = useCallback(async (): Promise<string | null> => {
-    if (!curveHash || !connected || !activePublicKey || !dexClient) {
+    if (!curveHash || !connected || !publicKey || !dexClient) {
       setTxError('Wallet not connected or curve not selected');
       return null;
     }
@@ -263,7 +263,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
         return `demo-refund-${Date.now().toString(16)}`;
       }
 
-      const deploy = dexClient.makeClaimRefundDeploy(curveHash, activePublicKey);
+      const deploy = dexClient.makeClaimRefundDeploy(curveHash, publicKey);
       const signedDeploy = await signDeploy(deploy);
 
       if (!signedDeploy) {
@@ -284,11 +284,11 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
     } finally {
       setIsPending(false);
     }
-  }, [curveHash, connected, activePublicKey, dexClient, signDeploy, isRefundable, refresh]);
+  }, [curveHash, connected, publicKey, dexClient, signDeploy, isRefundable, refresh]);
 
   // Graduate to DEX
   const graduate = useCallback(async (): Promise<string | null> => {
-    if (!curveHash || !connected || !activePublicKey || !dexClient) {
+    if (!curveHash || !connected || !publicKey || !dexClient) {
       setTxError('Wallet not connected or curve not selected');
       return null;
     }
@@ -310,7 +310,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
         return `demo-graduate-${Date.now().toString(16)}`;
       }
 
-      const deploy = dexClient.makeGraduateDeploy(curveHash, activePublicKey);
+      const deploy = dexClient.makeGraduateDeploy(curveHash, publicKey);
       const signedDeploy = await signDeploy(deploy);
 
       if (!signedDeploy) {
@@ -331,7 +331,7 @@ export function useBondingCurve(curveHash: string | null): UseBondingCurveResult
     } finally {
       setIsPending(false);
     }
-  }, [curveHash, connected, activePublicKey, dexClient, signDeploy, progress, refresh]);
+  }, [curveHash, connected, publicKey, dexClient, signDeploy, progress, refresh]);
 
   // Get quote for buying
   const getQuoteBuy = useCallback(async (csprAmount: bigint): Promise<bigint> => {

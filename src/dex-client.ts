@@ -1025,6 +1025,39 @@ export class DexClient {
     }
 
     /**
+     * Resolve a package hash to its active contract hash
+     */
+    private async resolvePackageToContract(packageHash: string, stateRootHash: string): Promise<string> {
+        try {
+            const packageData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: packageHash,
+                path: []
+            });
+
+            // If it's already a contract (has named_keys), return as-is
+            if (packageData.stored_value?.Contract) {
+                return packageHash;
+            }
+
+            // If it's a package, resolve to the latest contract version
+            const versions = packageData.stored_value?.ContractPackage?.versions;
+            if (versions && versions.length > 0) {
+                const latestVersion = versions[versions.length - 1];
+                let contractHash = latestVersion.contract_hash;
+                // Convert contract- prefix to hash- for RPC compatibility
+                if (contractHash.startsWith('contract-')) {
+                    contractHash = contractHash.replace('contract-', 'hash-');
+                }
+                return contractHash;
+            }
+        } catch (e) {
+            console.warn(`[resolvePackageToContract] Could not resolve package hash:`, e);
+        }
+        return packageHash;
+    }
+
+    /**
      * Get launch count from TokenFactory
      */
     async getLaunchCount(): Promise<number> {
@@ -1035,7 +1068,11 @@ export class DexClient {
         try {
             const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
             const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
-            const factoryHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+            const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+
+            // Resolve package hash to contract hash
+            const factoryHash = await this.resolvePackageToContract(factoryPackageHash, stateRootHash);
+            console.log('[getLaunchCount] Resolved contract hash:', factoryHash);
 
             const contractData: any = await this.rpcRequest('state_get_item', {
                 state_root_hash: stateRootHash,
@@ -1043,7 +1080,8 @@ export class DexClient {
                 path: []
             });
 
-            const namedKeys = contractData.stored_value?.Contract?.named_keys;
+            const namedKeys = contractData.stored_value?.Contract?.named_keys ||
+                              contractData.stored_value?.AddressableEntity?.named_keys || [];
             const launchCountURef = namedKeys?.find((k: any) => k.name === 'launch_count')?.key;
 
             if (!launchCountURef) return 0;
@@ -1072,10 +1110,223 @@ export class DexClient {
             return [];
         }
 
-        // For now, return empty array - real implementation would query the contract
-        // This would require calling get_launches entry point or reading from dictionaries
-        console.warn('getLaunches: Full implementation requires contract deployment');
-        return [];
+        try {
+            // First get the launch count
+            const launchCount = await this.getLaunchCount();
+            console.log('[getLaunches] Total launches:', launchCount);
+
+            if (launchCount === 0) {
+                return [];
+            }
+
+            // Get state root hash
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+
+            // Resolve package hash to contract hash
+            const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+            const factoryHash = await this.resolvePackageToContract(factoryPackageHash, stateRootHash);
+            console.log('[getLaunches] Resolved contract hash:', factoryHash);
+
+            // Get the contract to find the launches dictionary URef
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: factoryHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys ||
+                              contractData.stored_value?.AddressableEntity?.named_keys || [];
+
+            // Find the launches dictionary seed URef
+            const launchesDictKey = namedKeys.find((k: any) => k.name === 'launches');
+            if (!launchesDictKey) {
+                console.warn('[getLaunches] launches dictionary not found in named_keys');
+                return [];
+            }
+
+            const dictionarySeedURef = launchesDictKey.key;
+            console.log('[getLaunches] Dictionary seed URef:', dictionarySeedURef);
+
+            // Find the launches_meta dictionary seed URef (may not exist in older contracts)
+            const launchesMetaDictKey = namedKeys.find((k: any) => k.name === 'launches_meta');
+            const metaDictionarySeedURef = launchesMetaDictKey?.key || null;
+            console.log('[getLaunches] Meta dictionary seed URef:', metaDictionarySeedURef);
+
+            // Calculate the range to fetch
+            const startId = offset;
+            const endId = Math.min(offset + limit, launchCount);
+            const launches: LaunchInfo[] = [];
+
+            // Fetch each launch from the dictionary
+            for (let id = startId; id < endId; id++) {
+                try {
+                    const launchData = await this.getLaunchById(id, stateRootHash, dictionarySeedURef, metaDictionarySeedURef);
+                    if (launchData) {
+                        launches.push(launchData);
+                    }
+                } catch (err) {
+                    console.warn(`[getLaunches] Failed to fetch launch ${id}:`, err);
+                }
+            }
+
+            console.log('[getLaunches] Fetched', launches.length, 'launches');
+            return launches;
+        } catch (err) {
+            console.error('[getLaunches] Error:', err);
+            return [];
+        }
+    }
+
+    /**
+     * Get a single launch by ID from the dictionary
+     */
+    private async getLaunchById(
+        launchId: number,
+        stateRootHash: string,
+        dictionarySeedURef: string,
+        metaDictionarySeedURef: string | null
+    ): Promise<LaunchInfo | null> {
+        try {
+            // Query the dictionary item using the launch ID as key
+            const result: any = await this.rpcRequest('state_get_dictionary_item', {
+                state_root_hash: stateRootHash,
+                dictionary_identifier: {
+                    URef: {
+                        seed_uref: dictionarySeedURef,
+                        dictionary_item_key: launchId.toString()
+                    }
+                }
+            });
+
+            if (!result?.stored_value?.CLValue) {
+                console.warn(`[getLaunchById] No data for launch ${launchId}`);
+                return null;
+            }
+
+            // Parse the tuple (token_hash, curve_hash, creator)
+            const clValue = result.stored_value.CLValue;
+            const parsed = clValue.parsed;
+
+            console.log(`[getLaunchById] Launch ${launchId} raw data:`, parsed);
+
+            // The tuple format from contract: (Key, Key, Key)
+            let tokenHash: string = '';
+            let curveHash: string = '';
+            let creator: string = '';
+
+            if (Array.isArray(parsed)) {
+                tokenHash = this.parseKeyFromCLValue(parsed[0]);
+                curveHash = this.parseKeyFromCLValue(parsed[1]);
+                creator = this.parseKeyFromCLValue(parsed[2]);
+            } else if (parsed && typeof parsed === 'object') {
+                tokenHash = this.parseKeyFromCLValue(parsed[0] || parsed.token || parsed);
+                curveHash = this.parseKeyFromCLValue(parsed[1] || parsed.curve || parsed);
+                creator = this.parseKeyFromCLValue(parsed[2] || parsed.creator || parsed);
+            }
+
+            // Default values (used if metadata not available)
+            let name = `Launch #${launchId}`;
+            let symbol = `L${launchId}`;
+            let curveType: CurveType = 'sigmoid';
+            let status: 'active' | 'graduated' | 'refunding' = 'active';
+            let createdAt = Date.now();
+
+            // Try to fetch metadata from launches_meta dictionary
+            if (metaDictionarySeedURef) {
+                try {
+                    const metaResult: any = await this.rpcRequest('state_get_dictionary_item', {
+                        state_root_hash: stateRootHash,
+                        dictionary_identifier: {
+                            URef: {
+                                seed_uref: metaDictionarySeedURef,
+                                dictionary_item_key: launchId.toString()
+                            }
+                        }
+                    });
+
+                    if (metaResult?.stored_value?.CLValue?.parsed) {
+                        const metaParsed = metaResult.stored_value.CLValue.parsed;
+                        console.log(`[getLaunchById] Launch ${launchId} metadata:`, metaParsed);
+
+                        // Metadata format: (name, symbol, (curve_type, status, created_at))
+                        if (Array.isArray(metaParsed) && metaParsed.length >= 3) {
+                            name = metaParsed[0] || name;
+                            symbol = metaParsed[1] || symbol;
+
+                            // Inner tuple: (curve_type, status, created_at)
+                            const innerTuple = metaParsed[2];
+                            if (Array.isArray(innerTuple) && innerTuple.length >= 3) {
+                                const curveTypeNum = innerTuple[0];
+                                curveType = curveTypeNum === 0 ? 'linear' : curveTypeNum === 1 ? 'sigmoid' : 'steep';
+
+                                const statusNum = innerTuple[1];
+                                status = statusNum === 0 ? 'active' : statusNum === 1 ? 'graduated' : 'refunding';
+
+                                createdAt = Number(innerTuple[2]) || Date.now();
+                            }
+                        }
+                    }
+                } catch (metaErr) {
+                    console.log(`[getLaunchById] No metadata for launch ${launchId} (expected for older launches)`);
+                }
+            }
+
+            const launchInfo: LaunchInfo = {
+                id: launchId,
+                tokenHash,
+                curveHash,
+                creator,
+                name,
+                symbol,
+                curveType,
+                status,
+                createdAt,
+            };
+
+            return launchInfo;
+        } catch (err) {
+            console.error(`[getLaunchById] Error fetching launch ${launchId}:`, err);
+            return null;
+        }
+    }
+
+    /**
+     * Parse a Key from CLValue parsed format
+     */
+    private parseKeyFromCLValue(value: any): string {
+        if (!value) return '';
+
+        // Could be in various formats depending on SDK version
+        if (typeof value === 'string') {
+            return value;
+        }
+
+        // Hash format: { Hash: "abc123..." }
+        if (value.Hash) {
+            return 'hash-' + value.Hash;
+        }
+
+        // Account format: { Account: "abc123..." }
+        if (value.Account) {
+            return 'account-hash-' + value.Account;
+        }
+
+        // Key format from newer SDK
+        if (value.key) {
+            return value.key;
+        }
+
+        // Raw hex
+        if (value.data || value.bytes) {
+            const hex = value.data || value.bytes;
+            if (typeof hex === 'string') return hex;
+            if (Array.isArray(hex)) {
+                return hex.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+            }
+        }
+
+        return JSON.stringify(value);
     }
 
     /**
@@ -1250,10 +1501,21 @@ export class DexClient {
 
     /**
      * Send a signed deploy
+     * Accepts either a Deploy object or already-serialized JSON (from wallet signing)
      */
     public async sendDeploy(deploy: any): Promise<string> {
-        // Use sendDeployRaw to bypass SDK internal serialization issues if any
-        const deployJson = Deploy.toJSON(deploy);
+        let deployJson: any;
+
+        // Check if deploy is already a plain JSON object (from wallet signing)
+        // or if it's a Deploy instance that needs serialization
+        if (deploy && typeof deploy.toJSON === 'function') {
+            // It's a Deploy instance - serialize it
+            deployJson = Deploy.toJSON(deploy);
+        } else {
+            // It's already JSON (from wallet signing)
+            deployJson = deploy;
+        }
+
         return this.sendDeployRaw(deployJson);
     }
 

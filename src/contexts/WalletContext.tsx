@@ -297,8 +297,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
       const clickUI = getClickUI();
       if (clickUI?.sign) {
         try {
-          const signedDeploy = await clickUI.sign(deployJsonStr, publicKey);
-          return signedDeploy;
+          const result = await clickUI.sign(deployJsonStr, publicKey);
+          console.log('[signDeploy] CSPR.click result:', result);
+          // CSPR.click may return the full signed deploy or just a signature
+          if (result?.deploy) {
+            return result.deploy;
+          }
+          return result;
         } catch (err) {
           console.error('CSPR.click sign failed:', err);
           throw err;
@@ -311,8 +316,40 @@ export function WalletProvider({ children }: WalletProviderProps) {
       const casperWallet = getCasperWallet();
       if (casperWallet?.sign) {
         try {
-          const signedDeploy = await casperWallet.sign(deployJsonStr, publicKey);
-          return typeof signedDeploy === 'string' ? JSON.parse(signedDeploy) : signedDeploy;
+          const result = await casperWallet.sign(deployJsonStr, publicKey);
+          console.log('[signDeploy] CasperWallet result:', result);
+
+          // CasperWallet returns signature info, not the full deploy
+          // We need to add the signature to the original deploy JSON
+          const signatureResult = typeof result === 'string' ? JSON.parse(result) : result;
+
+          if (signatureResult.cancelled) {
+            throw new Error('User cancelled signing');
+          }
+
+          // Add the signature to the deploy
+          const signatureHex = signatureResult.signatureHex || signatureResult.signature;
+          if (!signatureHex) {
+            throw new Error('No signature returned from wallet');
+          }
+
+          // Add approval (signature) to the deploy JSON
+          // Format: "01" prefix for Ed25519 + public key + signature
+          const approval = {
+            signer: publicKey.startsWith('01') || publicKey.startsWith('02')
+              ? publicKey
+              : '01' + publicKey,
+            signature: '01' + signatureHex // 01 prefix for Ed25519
+          };
+
+          // Clone the deploy JSON and add the approval
+          const signedDeployJson = {
+            ...deployJson,
+            approvals: [approval]
+          };
+
+          console.log('[signDeploy] Signed deploy JSON:', signedDeployJson);
+          return signedDeployJson;
         } catch (err) {
           console.error('CasperWallet sign failed:', err);
           throw err;
