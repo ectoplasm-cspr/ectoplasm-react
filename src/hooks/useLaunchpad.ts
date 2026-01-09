@@ -119,11 +119,18 @@ const initialFormData: TokenFormData = {
 };
 
 export function useLaunchpad(): UseLaunchpadResult {
-  const { connected, publicKey, activePublicKey, signDeploy } = useWallet();
-  const { dexClient } = useDex();
+  const { connected, publicKey, signDeploy } = useWallet();
+  const { dex: dexClient } = useDex();
 
   // Check if contracts are deployed
   const isContractsDeployed = EctoplasmConfig.launchpad.isDeployed;
+
+  // Debug logging
+  console.log('[useLaunchpad] Config:', {
+    isContractsDeployed,
+    controller: EctoplasmConfig.launchpad.controller,
+    tokenFactory: EctoplasmConfig.launchpad.tokenFactory,
+  });
 
   // Token creation state
   const [formData, setFormDataState] = useState<TokenFormData>(initialFormData);
@@ -198,7 +205,7 @@ export function useLaunchpad(): UseLaunchpadResult {
   }, [refreshTokens]);
 
   const createToken = useCallback(async (): Promise<string | null> => {
-    if (!connected || !publicKey || !activePublicKey) {
+    if (!connected || !publicKey) {
       setCreateError('Please connect your wallet');
       return null;
     }
@@ -254,7 +261,7 @@ export function useLaunchpad(): UseLaunchpadResult {
       }
 
       // Build and sign the deploy
-      const deploy = dexClient.makeCreateLaunchDeploy(params, activePublicKey);
+      const deploy = dexClient.makeCreateLaunchDeploy(params, publicKey);
       const signedDeploy = await signDeploy(deploy);
 
       if (!signedDeploy) {
@@ -281,7 +288,7 @@ export function useLaunchpad(): UseLaunchpadResult {
     } finally {
       setIsCreating(false);
     }
-  }, [connected, publicKey, activePublicKey, formData, resetForm, isContractsDeployed, dexClient, signDeploy, refreshTokens]);
+  }, [connected, publicKey, formData, resetForm, isContractsDeployed, dexClient, signDeploy, refreshTokens]);
 
   // Filter and sort tokens
   const filteredTokens = useMemo(() => {

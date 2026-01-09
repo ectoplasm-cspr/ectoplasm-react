@@ -25,12 +25,14 @@ interface WalletContextType {
   connected: boolean;
   connecting: boolean;
   publicKey: string | null;
+  activePublicKey: any | null; // PublicKey object from casper-js-sdk
   accountHash: string | null;
   balances: Record<string, BalanceResult>;
   error: string | null;
   connect: () => Promise<void>;
   disconnect: () => void;
   refreshBalances: () => Promise<void>;
+  signDeploy: (deploy: any) => Promise<any>;
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
@@ -43,6 +45,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [activePublicKey, setActivePublicKey] = useState<any | null>(null); // PublicKey object
   const [accountHash, setAccountHash] = useState<string | null>(null);
   const [balances, setBalances] = useState<Record<string, BalanceResult>>({});
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +133,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
           if (result?.activeKey) {
             const pk = normalizePublicKeyHex(result.activeKey);
             setPublicKey(pk);
+            // Create PublicKey object for signing
+            try {
+              const pkObj = PublicKey.fromHex(pk);
+              setActivePublicKey(pkObj);
+            } catch (e) {
+              console.error('Failed to create PublicKey object:', e);
+            }
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'csprclick');
 
@@ -146,12 +156,19 @@ export function WalletProvider({ children }: WalletProviderProps) {
       // Try CasperWallet extension
       const casperWallet = getCasperWallet();
       if (casperWallet) {
-        const connected = await casperWallet.requestConnection();
-        if (connected) {
+        const walletConnected = await casperWallet.requestConnection();
+        if (walletConnected) {
           const activeKey = await casperWallet.getActivePublicKey();
           if (activeKey) {
             const pk = normalizePublicKeyHex(activeKey);
             setPublicKey(pk);
+            // Create PublicKey object for signing
+            try {
+              const pkObj = PublicKey.fromHex(pk);
+              setActivePublicKey(pkObj);
+            } catch (e) {
+              console.error('Failed to create PublicKey object:', e);
+            }
             setConnected(true);
             localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, 'casperwallet');
 
@@ -176,6 +193,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const disconnect = useCallback(() => {
     setConnected(false);
     setPublicKey(null);
+    setActivePublicKey(null);
     setAccountHash(null);
     setBalances({});
     localStorage.removeItem(STORAGE_KEYS.WALLET_TYPE);
@@ -206,6 +224,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
               if (activeKey) {
                 const pk = normalizePublicKeyHex(activeKey);
                 setPublicKey(pk);
+                try {
+                  const pkObj = PublicKey.fromHex(pk);
+                  setActivePublicKey(pkObj);
+                } catch (e) {
+                  console.error('Failed to create PublicKey object:', e);
+                }
                 setConnected(true);
                 const allBalances = await fetchBalancesForAccount(pk);
                 setBalances(allBalances);
@@ -220,6 +244,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
                 if (activeKey) {
                   const pk = normalizePublicKeyHex(activeKey);
                   setPublicKey(pk);
+                  try {
+                    const pkObj = PublicKey.fromHex(pk);
+                    setActivePublicKey(pkObj);
+                  } catch (e) {
+                    console.error('Failed to create PublicKey object:', e);
+                  }
                   setConnected(true);
                   const allBalances = await fetchBalancesForAccount(pk);
                   setBalances(allBalances);
@@ -245,16 +275,66 @@ export function WalletProvider({ children }: WalletProviderProps) {
     return () => clearInterval(interval);
   }, [connected, publicKey, refreshBalances]);
 
+  // Sign a deploy using the connected wallet
+  const signDeploy = useCallback(async (deploy: any): Promise<any> => {
+    if (!connected || !publicKey) {
+      throw new Error('Wallet not connected');
+    }
+
+    // Import Deploy for proper serialization
+    const { Deploy } = (sdk as any).default ?? sdk;
+
+    // Convert deploy to JSON using SDK's toJSON method
+    const deployJson = Deploy.toJSON(deploy);
+    const deployJsonStr = JSON.stringify(deployJson);
+
+    console.log('[signDeploy] Deploy JSON:', deployJson);
+
+    const savedWalletType = localStorage.getItem(STORAGE_KEYS.WALLET_TYPE);
+
+    // Try CSPR.click
+    if (savedWalletType === 'csprclick') {
+      const clickUI = getClickUI();
+      if (clickUI?.sign) {
+        try {
+          const signedDeploy = await clickUI.sign(deployJsonStr, publicKey);
+          return signedDeploy;
+        } catch (err) {
+          console.error('CSPR.click sign failed:', err);
+          throw err;
+        }
+      }
+    }
+
+    // Try CasperWallet
+    if (savedWalletType === 'casperwallet') {
+      const casperWallet = getCasperWallet();
+      if (casperWallet?.sign) {
+        try {
+          const signedDeploy = await casperWallet.sign(deployJsonStr, publicKey);
+          return typeof signedDeploy === 'string' ? JSON.parse(signedDeploy) : signedDeploy;
+        } catch (err) {
+          console.error('CasperWallet sign failed:', err);
+          throw err;
+        }
+      }
+    }
+
+    throw new Error('No wallet available to sign');
+  }, [connected, publicKey, getClickUI, getCasperWallet]);
+
   const value: WalletContextType = {
     connected,
     connecting,
     publicKey,
+    activePublicKey,
     accountHash,
     balances,
     error,
     connect,
     disconnect,
     refreshBalances,
+    signDeploy,
   };
 
   return (

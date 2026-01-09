@@ -16,6 +16,9 @@ const {
     DeployUtil,
     Keys,
     CLValue,
+    CLTypeUInt512,  // Pre-instantiated type constant
+    CLTypeUInt64,   // Pre-instantiated type constant
+    CLTypeString,   // Pre-instantiated type constant
     RuntimeArgs,
     CLAccountHash,
     CLKey,
@@ -723,7 +726,7 @@ export class DexClient {
         tokenPackageHash: string,
         spenderHash: string,
         amount: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const spenderKey = Key.newKey(spenderHash.includes('hash-') ? spenderHash : 'hash-' + spenderHash);
 
@@ -737,7 +740,7 @@ export class DexClient {
             'approve',
             args,
             '3000000000', // 3 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -750,7 +753,7 @@ export class DexClient {
         path: string[], // Array of token contract hashes
         to: string, // Recipient account hash
         deadline: number, // Unix timestamp in milliseconds
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         // Build path as List<Key>
         const pathKeys = path.map(hash =>
@@ -770,7 +773,7 @@ export class DexClient {
             'swap_exact_tokens_for_tokens',
             args,
             '15000000000', // 15 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -786,7 +789,7 @@ export class DexClient {
         amountBMin: bigint,
         to: string,
         deadline: number,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             token_a: CLValue.newCLKey(Key.newKey(tokenA.startsWith('hash-') ? tokenA : 'hash-' + tokenA)),
@@ -804,7 +807,7 @@ export class DexClient {
             'add_liquidity',
             args,
             '500000000000', // 300 CSPR (bootstrap can be very expensive; unused is refunded)
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -819,7 +822,7 @@ export class DexClient {
         amountBMin: bigint,
         to: string,
         deadline: number,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             token_a: CLValue.newCLKey(Key.newKey(tokenA.startsWith('hash-') ? tokenA : 'hash-' + tokenA)),
@@ -836,7 +839,7 @@ export class DexClient {
             'remove_liquidity',
             args,
             '15000000000', // 15 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -847,7 +850,7 @@ export class DexClient {
         tokenPackageHash: string,
         to: string,
         amount: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             to: CLValue.newCLKey(Key.newKey(to)),
@@ -859,7 +862,7 @@ export class DexClient {
             'mint',
             args,
             '5000000000', // 5 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -877,7 +880,7 @@ export class DexClient {
      */
     makeCreateLaunchDeploy(
         params: LaunchParams,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         if (!this.config.launchpad?.tokenFactoryHash) {
             throw new Error('Launchpad contracts not configured');
@@ -890,31 +893,41 @@ export class DexClient {
             'steep': 2,
         };
 
+        // Helper to create Option<U512> using CLValue.newCLOption
+        const optionU512 = (value: bigint | undefined) => {
+            if (value !== undefined) {
+                return CLValue.newCLOption(CLValue.newCLUInt512(value.toString()), CLTypeUInt512);
+            }
+            return CLValue.newCLOption(null, CLTypeUInt512);
+        };
+
+        // Helper to create Option<U64>
+        const optionU64 = (value: bigint | number | undefined) => {
+            if (value !== undefined) {
+                return CLValue.newCLOption(CLValue.newCLUint64(BigInt(value)), CLTypeUInt64);
+            }
+            return CLValue.newCLOption(null, CLTypeUInt64);
+        };
+
+        // Helper to create Option<String>
+        const optionString = (value: string | undefined) => {
+            if (value) {
+                return CLValue.newCLOption(CLValue.newCLString(value), CLTypeString);
+            }
+            return CLValue.newCLOption(null, CLTypeString);
+        };
+
         const argsMap: Record<string, any> = {
             name: CLValue.newCLString(params.name),
             symbol: CLValue.newCLString(params.symbol),
             curve_type: CLValue.newCLUint8(curveTypeMap[params.curveType]),
-            graduation_threshold: params.graduationThreshold
-                ? CLValue.newCLOption({ type: 'U512', value: CLValue.newCLUInt512(params.graduationThreshold.toString()) })
-                : CLValue.newCLOption({ type: 'U512', value: null }),
-            creator_fee_bps: params.creatorFeeBps !== undefined
-                ? CLValue.newCLOption({ type: 'U64', value: CLValue.newCLUint64(BigInt(params.creatorFeeBps)) })
-                : CLValue.newCLOption({ type: 'U64', value: null }),
-            deadline_days: params.deadlineDays !== undefined
-                ? CLValue.newCLOption({ type: 'U64', value: CLValue.newCLUint64(BigInt(params.deadlineDays)) })
-                : CLValue.newCLOption({ type: 'U64', value: null }),
-            promo_budget: params.promoBudget
-                ? CLValue.newCLOption({ type: 'U512', value: CLValue.newCLUInt512(params.promoBudget.toString()) })
-                : CLValue.newCLOption({ type: 'U512', value: null }),
-            description: params.description
-                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.description) })
-                : CLValue.newCLOption({ type: 'String', value: null }),
-            website: params.website
-                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.website) })
-                : CLValue.newCLOption({ type: 'String', value: null }),
-            twitter: params.twitter
-                ? CLValue.newCLOption({ type: 'String', value: CLValue.newCLString(params.twitter) })
-                : CLValue.newCLOption({ type: 'String', value: null }),
+            graduation_threshold: optionU512(params.graduationThreshold),
+            creator_fee_bps: optionU64(params.creatorFeeBps),
+            deadline_days: optionU64(params.deadlineDays),
+            promo_budget: optionU512(params.promoBudget),
+            description: optionString(params.description),
+            website: optionString(params.website),
+            twitter: optionString(params.twitter),
         };
 
         const args = Args.fromMap(argsMap);
@@ -924,7 +937,7 @@ export class DexClient {
             'create_launch',
             args,
             '80000000000', // 80 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -935,7 +948,7 @@ export class DexClient {
         curveHash: string,
         csprAmount: bigint,
         minTokensOut: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             min_tokens_out: CLValue.newCLUInt256(minTokensOut.toString()),
@@ -948,7 +961,7 @@ export class DexClient {
             'buy',
             args,
             csprAmount.toString(), // This is the payment/purchase amount
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -959,7 +972,7 @@ export class DexClient {
         curveHash: string,
         tokenAmount: bigint,
         minCsprOut: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             amount: CLValue.newCLUInt256(tokenAmount.toString()),
@@ -971,7 +984,7 @@ export class DexClient {
             'sell',
             args,
             '10000000000', // 10 CSPR gas
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -980,7 +993,7 @@ export class DexClient {
      */
     makeClaimRefundDeploy(
         curveHash: string,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({});
 
@@ -989,7 +1002,7 @@ export class DexClient {
             'claim_refund',
             args,
             '5000000000', // 5 CSPR gas
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -998,7 +1011,7 @@ export class DexClient {
      */
     makeGraduateDeploy(
         curveHash: string,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({});
 
@@ -1007,7 +1020,7 @@ export class DexClient {
             'graduate',
             args,
             '50000000000', // 50 CSPR gas (creates DEX pair)
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -1198,8 +1211,11 @@ export class DexClient {
         entryPoint: string,
         args: any,
         paymentAmount: string,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
+        // Create PublicKey from hex string here (not from React state) to preserve prototype methods
+        const senderPublicKey = PublicKey.fromHex(senderPublicKeyHex);
+
         const header = DeployHeader.default();
         header.account = senderPublicKey;
         header.chainName = this.config.chainName;

@@ -257,7 +257,9 @@ export function TokenCreationForm({ isOpen, onClose }: TokenCreationFormProps) {
         {/* Footer */}
         <div className="launch-form-footer">
           <small className="muted">
-            Demo only — deploys to Casper testnet with pump.fun inspired presets.
+            {isContractsDeployed
+              ? 'Deploys to Casper testnet with pump.fun inspired presets.'
+              : 'Demo only — contracts not deployed yet.'}
           </small>
           <button
             type="submit"
