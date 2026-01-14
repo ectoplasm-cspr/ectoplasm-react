@@ -213,7 +213,7 @@ export function useSwap(): UseSwapResult {
           tIn.packageHash!,
           config.routerPackageHash,
           quote.amountInRaw,
-          senderKey
+          publicKey
         );
 
         const approveJson = Deploy.toJSON(approveDeploy);
@@ -258,7 +258,7 @@ export function useSwap(): UseSwapResult {
         [tIn.packageHash!, tOut.packageHash!], // Use package hashes
         `account-hash-${senderKey.accountHash().toHex()}`,
         Date.now() + 1800000, // 30 mins
-        senderKey
+        publicKey
       );
 
       const swapJson = Deploy.toJSON(swapDeploy);

@@ -300,7 +300,7 @@ export function useLiquidity(): UseLiquidityResult {
       const w = (window as any).CasperWalletProvider && (window as any).CasperWalletProvider();
       if (!w) throw new Error("No wallet");
 
-      const approveA = dex.makeApproveTokenDeploy(tA.packageHash, config.routerPackageHash, aRaw, senderKey);
+      const approveA = dex.makeApproveTokenDeploy(tA.packageHash, config.routerPackageHash, aRaw, publicKey);
       const sigA = await w.sign(JSON.stringify(Deploy.toJSON(approveA)), publicKey);
       const deployA = Deploy.toJSON(approveA);
       deployA.approvals = [{ signer: publicKey, signature: sigA }];
@@ -309,7 +309,7 @@ export function useLiquidity(): UseLiquidityResult {
 
       // Approve B
       setTxStep(`Approving ${tokenB}...`);
-      const approveB = dex.makeApproveTokenDeploy(tB.packageHash, config.routerPackageHash, bRaw, senderKey);
+      const approveB = dex.makeApproveTokenDeploy(tB.packageHash, config.routerPackageHash, bRaw, publicKey);
       const sigB = await w.sign(JSON.stringify(Deploy.toJSON(approveB)), publicKey);
       const deployB = Deploy.toJSON(approveB);
       deployB.approvals = [{ signer: publicKey, signature: sigB }];
@@ -329,7 +329,7 @@ export function useLiquidity(): UseLiquidityResult {
         aRaw, bRaw, minA, minB,
         accHash,
         Date.now() + 1800000,
-        senderKey
+        publicKey
       );
 
       const sigLiq = await w.sign(JSON.stringify(Deploy.toJSON(addLiq)), publicKey);

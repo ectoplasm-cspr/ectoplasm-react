@@ -79,7 +79,7 @@ export function Faucet() {
           ectoConfig.packageHash,
           senderKey.accountHash().toPrefixedString(), // to
           amountRaw,
-          senderKey
+          publicKey // Pass hex string, not PublicKey object
       );
 
       const deployJson = Deploy.toJSON(mintDeploy);
