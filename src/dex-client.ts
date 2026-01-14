@@ -16,6 +16,9 @@ const {
     DeployUtil,
     Keys,
     CLValue,
+    CLTypeUInt512,  // Pre-instantiated type constant
+    CLTypeUInt64,   // Pre-instantiated type constant
+    CLTypeString,   // Pre-instantiated type constant
     RuntimeArgs,
     CLAccountHash,
     CLKey,
@@ -53,6 +56,55 @@ export interface DexConfig {
     pairs: {
         [name: string]: string; // e.g., "WCSPR-ECTO": "hash-..."
     };
+    // Launchpad contracts (optional - may not be deployed)
+    launchpad?: {
+        controllerHash: string;
+        tokenFactoryHash: string;
+    };
+}
+
+// ============ Launchpad Types ============
+
+export type CurveType = 'linear' | 'sigmoid' | 'steep';
+
+export interface LaunchParams {
+    name: string;
+    symbol: string;
+    curveType: CurveType;
+    graduationThreshold?: bigint; // Optional override (in motes)
+    creatorFeeBps?: number;       // Optional override (basis points)
+    deadlineDays?: number;        // Optional override
+    promoBudget?: bigint;         // Marketing budget (in motes)
+    description?: string;
+    website?: string;
+    twitter?: string;
+}
+
+export interface LaunchInfo {
+    id: number;
+    tokenHash: string;
+    curveHash: string;
+    creator: string;
+    name: string;
+    symbol: string;
+    curveType: CurveType;
+    status: 'active' | 'graduated' | 'refunding';
+    createdAt: number;
+}
+
+export interface CurveState {
+    tokenHash: string;
+    curveType: CurveType;
+    csprRaised: bigint;
+    tokensSold: bigint;
+    totalSupply: bigint;
+    graduationThreshold: bigint;
+    currentPrice: bigint;
+    progress: number; // 0-100%
+    status: 'active' | 'graduated' | 'refunding';
+    deadline: number; // Unix timestamp
+    promoBudget: bigint;
+    promoReleased: bigint;
 }
 
 // ============ DEX Client ============
@@ -674,7 +726,7 @@ export class DexClient {
         tokenPackageHash: string,
         spenderHash: string,
         amount: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const spenderKey = Key.newKey(spenderHash.includes('hash-') ? spenderHash : 'hash-' + spenderHash);
 
@@ -688,7 +740,7 @@ export class DexClient {
             'approve',
             args,
             '3000000000', // 3 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -701,7 +753,7 @@ export class DexClient {
         path: string[], // Array of token contract hashes
         to: string, // Recipient account hash
         deadline: number, // Unix timestamp in milliseconds
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         // Build path as List<Key>
         const pathKeys = path.map(hash =>
@@ -721,7 +773,7 @@ export class DexClient {
             'swap_exact_tokens_for_tokens',
             args,
             '15000000000', // 15 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -737,7 +789,7 @@ export class DexClient {
         amountBMin: bigint,
         to: string,
         deadline: number,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             token_a: CLValue.newCLKey(Key.newKey(tokenA.startsWith('hash-') ? tokenA : 'hash-' + tokenA)),
@@ -755,7 +807,7 @@ export class DexClient {
             'add_liquidity',
             args,
             '500000000000', // 300 CSPR (bootstrap can be very expensive; unused is refunded)
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -770,7 +822,7 @@ export class DexClient {
         amountBMin: bigint,
         to: string,
         deadline: number,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             token_a: CLValue.newCLKey(Key.newKey(tokenA.startsWith('hash-') ? tokenA : 'hash-' + tokenA)),
@@ -787,7 +839,7 @@ export class DexClient {
             'remove_liquidity',
             args,
             '15000000000', // 15 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
     }
 
@@ -798,7 +850,7 @@ export class DexClient {
         tokenPackageHash: string,
         to: string,
         amount: bigint,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
         const args = Args.fromMap({
             to: CLValue.newCLKey(Key.newKey(to)),
@@ -810,8 +862,561 @@ export class DexClient {
             'mint',
             args,
             '5000000000', // 5 CSPR
-            senderPublicKey
+            senderPublicKeyHex
         );
+    }
+
+    // ============ Launchpad Functions ============
+
+    /**
+     * Check if launchpad contracts are configured
+     */
+    isLaunchpadConfigured(): boolean {
+        return !!(this.config.launchpad?.controllerHash && this.config.launchpad?.tokenFactoryHash);
+    }
+
+    /**
+     * Create a new token launch via TokenFactory
+     */
+    makeCreateLaunchDeploy(
+        params: LaunchParams,
+        senderPublicKeyHex: string,
+    ): any {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            throw new Error('Launchpad contracts not configured');
+        }
+
+        // Map curve type to u8
+        const curveTypeMap: Record<CurveType, number> = {
+            'linear': 0,
+            'sigmoid': 1,
+            'steep': 2,
+        };
+
+        // Helper to create Option<U512> using CLValue.newCLOption
+        const optionU512 = (value: bigint | undefined) => {
+            if (value !== undefined) {
+                return CLValue.newCLOption(CLValue.newCLUInt512(value.toString()), CLTypeUInt512);
+            }
+            return CLValue.newCLOption(null, CLTypeUInt512);
+        };
+
+        // Helper to create Option<U64>
+        const optionU64 = (value: bigint | number | undefined) => {
+            if (value !== undefined) {
+                return CLValue.newCLOption(CLValue.newCLUint64(BigInt(value)), CLTypeUInt64);
+            }
+            return CLValue.newCLOption(null, CLTypeUInt64);
+        };
+
+        // Helper to create Option<String>
+        const optionString = (value: string | undefined) => {
+            if (value) {
+                return CLValue.newCLOption(CLValue.newCLString(value), CLTypeString);
+            }
+            return CLValue.newCLOption(null, CLTypeString);
+        };
+
+        const argsMap: Record<string, any> = {
+            name: CLValue.newCLString(params.name),
+            symbol: CLValue.newCLString(params.symbol),
+            curve_type: CLValue.newCLUint8(curveTypeMap[params.curveType]),
+            graduation_threshold: optionU512(params.graduationThreshold),
+            creator_fee_bps: optionU64(params.creatorFeeBps),
+            deadline_days: optionU64(params.deadlineDays),
+            promo_budget: optionU512(params.promoBudget),
+            description: optionString(params.description),
+            website: optionString(params.website),
+            twitter: optionString(params.twitter),
+        };
+
+        const args = Args.fromMap(argsMap);
+
+        return this.buildDeploy(
+            this.config.launchpad.tokenFactoryHash,
+            'create_launch',
+            args,
+            '80000000000', // 80 CSPR
+            senderPublicKeyHex
+        );
+    }
+
+    /**
+     * Buy tokens from bonding curve (with CSPR payment)
+     */
+    makeBuyTokensDeploy(
+        curveHash: string,
+        csprAmount: bigint,
+        minTokensOut: bigint,
+        senderPublicKeyHex: string,
+    ): any {
+        const args = Args.fromMap({
+            min_tokens_out: CLValue.newCLUInt256(minTokensOut.toString()),
+        });
+
+        // Note: For payable entry points, the payment amount IS the CSPR being sent
+        // The contract will receive the payment amount as the purchase amount
+        return this.buildDeploy(
+            curveHash,
+            'buy',
+            args,
+            csprAmount.toString(), // This is the payment/purchase amount
+            senderPublicKeyHex
+        );
+    }
+
+    /**
+     * Sell tokens back to bonding curve
+     */
+    makeSellTokensDeploy(
+        curveHash: string,
+        tokenAmount: bigint,
+        minCsprOut: bigint,
+        senderPublicKeyHex: string,
+    ): any {
+        const args = Args.fromMap({
+            amount: CLValue.newCLUInt256(tokenAmount.toString()),
+            min_cspr_out: CLValue.newCLUInt512(minCsprOut.toString()),
+        });
+
+        return this.buildDeploy(
+            curveHash,
+            'sell',
+            args,
+            '10000000000', // 10 CSPR gas
+            senderPublicKeyHex
+        );
+    }
+
+    /**
+     * Claim refund from a failed/expired launch
+     */
+    makeClaimRefundDeploy(
+        curveHash: string,
+        senderPublicKeyHex: string,
+    ): any {
+        const args = Args.fromMap({});
+
+        return this.buildDeploy(
+            curveHash,
+            'claim_refund',
+            args,
+            '5000000000', // 5 CSPR gas
+            senderPublicKeyHex
+        );
+    }
+
+    /**
+     * Graduate a launch to DEX (when threshold is reached)
+     */
+    makeGraduateDeploy(
+        curveHash: string,
+        senderPublicKeyHex: string,
+    ): any {
+        const args = Args.fromMap({});
+
+        return this.buildDeploy(
+            curveHash,
+            'graduate',
+            args,
+            '50000000000', // 50 CSPR gas (creates DEX pair)
+            senderPublicKeyHex
+        );
+    }
+
+    /**
+     * Resolve a package hash to its active contract hash
+     */
+    private async resolvePackageToContract(packageHash: string, stateRootHash: string): Promise<string> {
+        try {
+            const packageData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: packageHash,
+                path: []
+            });
+
+            // If it's already a contract (has named_keys), return as-is
+            if (packageData.stored_value?.Contract) {
+                return packageHash;
+            }
+
+            // If it's a package, resolve to the latest contract version
+            const versions = packageData.stored_value?.ContractPackage?.versions;
+            if (versions && versions.length > 0) {
+                const latestVersion = versions[versions.length - 1];
+                let contractHash = latestVersion.contract_hash;
+                // Convert contract- prefix to hash- for RPC compatibility
+                if (contractHash.startsWith('contract-')) {
+                    contractHash = contractHash.replace('contract-', 'hash-');
+                }
+                return contractHash;
+            }
+        } catch (e) {
+            console.warn(`[resolvePackageToContract] Could not resolve package hash:`, e);
+        }
+        return packageHash;
+    }
+
+    /**
+     * Get launch count from TokenFactory
+     */
+    async getLaunchCount(): Promise<number> {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            return 0;
+        }
+
+        try {
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+
+            // Resolve package hash to contract hash
+            const factoryHash = await this.resolvePackageToContract(factoryPackageHash, stateRootHash);
+            console.log('[getLaunchCount] Resolved contract hash:', factoryHash);
+
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: factoryHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys ||
+                              contractData.stored_value?.AddressableEntity?.named_keys || [];
+            const launchCountURef = namedKeys?.find((k: any) => k.name === 'launch_count')?.key;
+
+            if (!launchCountURef) return 0;
+
+            const res = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: launchCountURef,
+                path: []
+            });
+
+            if (res.stored_value?.CLValue?.parsed) {
+                return Number(res.stored_value.CLValue.parsed);
+            }
+            return 0;
+        } catch (e) {
+            console.error('Error fetching launch count:', e);
+            return 0;
+        }
+    }
+
+    /**
+     * Get launches (paginated)
+     */
+    async getLaunches(offset: number = 0, limit: number = 20): Promise<LaunchInfo[]> {
+        if (!this.config.launchpad?.tokenFactoryHash) {
+            return [];
+        }
+
+        try {
+            // First get the launch count
+            const launchCount = await this.getLaunchCount();
+            console.log('[getLaunches] Total launches:', launchCount);
+
+            if (launchCount === 0) {
+                return [];
+            }
+
+            // Get state root hash
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+
+            // Resolve package hash to contract hash
+            const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
+            const factoryHash = await this.resolvePackageToContract(factoryPackageHash, stateRootHash);
+            console.log('[getLaunches] Resolved contract hash:', factoryHash);
+
+            // Get the contract to find the launches dictionary URef
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: factoryHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys ||
+                              contractData.stored_value?.AddressableEntity?.named_keys || [];
+
+            // Find the launches dictionary seed URef
+            const launchesDictKey = namedKeys.find((k: any) => k.name === 'launches');
+            if (!launchesDictKey) {
+                console.warn('[getLaunches] launches dictionary not found in named_keys');
+                return [];
+            }
+
+            const dictionarySeedURef = launchesDictKey.key;
+            console.log('[getLaunches] Dictionary seed URef:', dictionarySeedURef);
+
+            // Find the launches_meta dictionary seed URef (may not exist in older contracts)
+            const launchesMetaDictKey = namedKeys.find((k: any) => k.name === 'launches_meta');
+            const metaDictionarySeedURef = launchesMetaDictKey?.key || null;
+            console.log('[getLaunches] Meta dictionary seed URef:', metaDictionarySeedURef);
+
+            // Calculate the range to fetch
+            const startId = offset;
+            const endId = Math.min(offset + limit, launchCount);
+            const launches: LaunchInfo[] = [];
+
+            // Fetch each launch from the dictionary
+            for (let id = startId; id < endId; id++) {
+                try {
+                    const launchData = await this.getLaunchById(id, stateRootHash, dictionarySeedURef, metaDictionarySeedURef);
+                    if (launchData) {
+                        launches.push(launchData);
+                    }
+                } catch (err) {
+                    console.warn(`[getLaunches] Failed to fetch launch ${id}:`, err);
+                }
+            }
+
+            console.log('[getLaunches] Fetched', launches.length, 'launches');
+            return launches;
+        } catch (err) {
+            console.error('[getLaunches] Error:', err);
+            return [];
+        }
+    }
+
+    /**
+     * Get a single launch by ID from the dictionary
+     */
+    private async getLaunchById(
+        launchId: number,
+        stateRootHash: string,
+        dictionarySeedURef: string,
+        metaDictionarySeedURef: string | null
+    ): Promise<LaunchInfo | null> {
+        try {
+            // Query the dictionary item using the launch ID as key
+            const result: any = await this.rpcRequest('state_get_dictionary_item', {
+                state_root_hash: stateRootHash,
+                dictionary_identifier: {
+                    URef: {
+                        seed_uref: dictionarySeedURef,
+                        dictionary_item_key: launchId.toString()
+                    }
+                }
+            });
+
+            if (!result?.stored_value?.CLValue) {
+                console.warn(`[getLaunchById] No data for launch ${launchId}`);
+                return null;
+            }
+
+            // Parse the tuple (token_hash, curve_hash, creator)
+            const clValue = result.stored_value.CLValue;
+            const parsed = clValue.parsed;
+
+            console.log(`[getLaunchById] Launch ${launchId} raw data:`, parsed);
+
+            // The tuple format from contract: (Key, Key, Key)
+            let tokenHash: string = '';
+            let curveHash: string = '';
+            let creator: string = '';
+
+            if (Array.isArray(parsed)) {
+                tokenHash = this.parseKeyFromCLValue(parsed[0]);
+                curveHash = this.parseKeyFromCLValue(parsed[1]);
+                creator = this.parseKeyFromCLValue(parsed[2]);
+            } else if (parsed && typeof parsed === 'object') {
+                tokenHash = this.parseKeyFromCLValue(parsed[0] || parsed.token || parsed);
+                curveHash = this.parseKeyFromCLValue(parsed[1] || parsed.curve || parsed);
+                creator = this.parseKeyFromCLValue(parsed[2] || parsed.creator || parsed);
+            }
+
+            // Default values (used if metadata not available)
+            let name = `Launch #${launchId}`;
+            let symbol = `L${launchId}`;
+            let curveType: CurveType = 'sigmoid';
+            let status: 'active' | 'graduated' | 'refunding' = 'active';
+            let createdAt = Date.now();
+
+            // Try to fetch metadata from launches_meta dictionary
+            if (metaDictionarySeedURef) {
+                try {
+                    const metaResult: any = await this.rpcRequest('state_get_dictionary_item', {
+                        state_root_hash: stateRootHash,
+                        dictionary_identifier: {
+                            URef: {
+                                seed_uref: metaDictionarySeedURef,
+                                dictionary_item_key: launchId.toString()
+                            }
+                        }
+                    });
+
+                    if (metaResult?.stored_value?.CLValue?.parsed) {
+                        const metaParsed = metaResult.stored_value.CLValue.parsed;
+                        console.log(`[getLaunchById] Launch ${launchId} metadata:`, metaParsed);
+
+                        // Metadata format: (name, symbol, (curve_type, status, created_at))
+                        if (Array.isArray(metaParsed) && metaParsed.length >= 3) {
+                            name = metaParsed[0] || name;
+                            symbol = metaParsed[1] || symbol;
+
+                            // Inner tuple: (curve_type, status, created_at)
+                            const innerTuple = metaParsed[2];
+                            if (Array.isArray(innerTuple) && innerTuple.length >= 3) {
+                                const curveTypeNum = innerTuple[0];
+                                curveType = curveTypeNum === 0 ? 'linear' : curveTypeNum === 1 ? 'sigmoid' : 'steep';
+
+                                const statusNum = innerTuple[1];
+                                status = statusNum === 0 ? 'active' : statusNum === 1 ? 'graduated' : 'refunding';
+
+                                createdAt = Number(innerTuple[2]) || Date.now();
+                            }
+                        }
+                    }
+                } catch (metaErr) {
+                    console.log(`[getLaunchById] No metadata for launch ${launchId} (expected for older launches)`);
+                }
+            }
+
+            const launchInfo: LaunchInfo = {
+                id: launchId,
+                tokenHash,
+                curveHash,
+                creator,
+                name,
+                symbol,
+                curveType,
+                status,
+                createdAt,
+            };
+
+            return launchInfo;
+        } catch (err) {
+            console.error(`[getLaunchById] Error fetching launch ${launchId}:`, err);
+            return null;
+        }
+    }
+
+    /**
+     * Parse a Key from CLValue parsed format
+     */
+    private parseKeyFromCLValue(value: any): string {
+        if (!value) return '';
+
+        // Could be in various formats depending on SDK version
+        if (typeof value === 'string') {
+            return value;
+        }
+
+        // Hash format: { Hash: "abc123..." }
+        if (value.Hash) {
+            return 'hash-' + value.Hash;
+        }
+
+        // Account format: { Account: "abc123..." }
+        if (value.Account) {
+            return 'account-hash-' + value.Account;
+        }
+
+        // Key format from newer SDK
+        if (value.key) {
+            return value.key;
+        }
+
+        // Raw hex
+        if (value.data || value.bytes) {
+            const hex = value.data || value.bytes;
+            if (typeof hex === 'string') return hex;
+            if (Array.isArray(hex)) {
+                return hex.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+            }
+        }
+
+        return JSON.stringify(value);
+    }
+
+    /**
+     * Get bonding curve state
+     */
+    async getCurveState(curveHash: string): Promise<CurveState | null> {
+        try {
+            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
+            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const cleanHash = this.normalizeContractKey(curveHash);
+
+            const contractData: any = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: cleanHash,
+                path: []
+            });
+
+            const namedKeys = contractData.stored_value?.Contract?.named_keys;
+            if (!namedKeys) return null;
+
+            // Read key storage values
+            const getURefValue = async (name: string): Promise<any> => {
+                const uref = namedKeys.find((k: any) => k.name === name)?.key;
+                if (!uref) return null;
+                const res = await this.rpcRequest('state_get_item', {
+                    state_root_hash: stateRootHash,
+                    key: uref,
+                    path: []
+                });
+                return res.stored_value?.CLValue?.parsed;
+            };
+
+            const tokenHash = await getURefValue('token_hash') || '';
+            const curveType = await getURefValue('curve_type') || 0;
+            const csprRaised = BigInt(await getURefValue('cspr_raised') || 0);
+            const tokensSold = BigInt(await getURefValue('tokens_sold') || 0);
+            const totalSupply = BigInt(await getURefValue('total_supply') || 0);
+            const graduationThreshold = BigInt(await getURefValue('graduation_threshold') || 0);
+            const status = await getURefValue('status') || 0;
+            const deadline = Number(await getURefValue('deadline') || 0);
+            const promoBudget = BigInt(await getURefValue('promo_budget') || 0);
+            const promoReleased = BigInt(await getURefValue('promo_released') || 0);
+
+            // Calculate current price (simplified - actual would call get_price entry point)
+            const progress = graduationThreshold > 0n
+                ? Number((csprRaised * 100n) / graduationThreshold)
+                : 0;
+
+            const curveTypeMap: Record<number, CurveType> = { 0: 'linear', 1: 'sigmoid', 2: 'steep' };
+            const statusMap: Record<number, 'active' | 'graduated' | 'refunding'> = {
+                0: 'active', 1: 'graduated', 2: 'refunding'
+            };
+
+            return {
+                tokenHash: typeof tokenHash === 'string' ? tokenHash : '',
+                curveType: curveTypeMap[curveType] || 'linear',
+                csprRaised,
+                tokensSold,
+                totalSupply,
+                graduationThreshold,
+                currentPrice: 0n, // Would need to call contract
+                progress,
+                status: statusMap[status] || 'active',
+                deadline,
+                promoBudget,
+                promoReleased,
+            };
+        } catch (e) {
+            console.error('Error fetching curve state:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Get quote for buying tokens
+     */
+    async getQuoteBuy(curveHash: string, csprAmount: bigint): Promise<bigint> {
+        // This would call the contract's get_quote_buy entry point
+        // For now, return 0 - real implementation after deployment
+        console.warn('getQuoteBuy: Requires contract deployment for accurate quotes');
+        return 0n;
+    }
+
+    /**
+     * Get quote for selling tokens
+     */
+    async getQuoteSell(curveHash: string, tokenAmount: bigint): Promise<bigint> {
+        // This would call the contract's get_quote_sell entry point
+        console.warn('getQuoteSell: Requires contract deployment for accurate quotes');
+        return 0n;
     }
 
     // ============ Utility Functions ============
@@ -857,8 +1462,11 @@ export class DexClient {
         entryPoint: string,
         args: any,
         paymentAmount: string,
-        senderPublicKey: typeof PublicKey,
+        senderPublicKeyHex: string,
     ): any {
+        // Create PublicKey from hex string here (not from React state) to preserve prototype methods
+        const senderPublicKey = PublicKey.fromHex(senderPublicKeyHex);
+
         const header = DeployHeader.default();
         header.account = senderPublicKey;
         header.chainName = this.config.chainName;
@@ -893,10 +1501,21 @@ export class DexClient {
 
     /**
      * Send a signed deploy
+     * Accepts either a Deploy object or already-serialized JSON (from wallet signing)
      */
     public async sendDeploy(deploy: any): Promise<string> {
-        // Use sendDeployRaw to bypass SDK internal serialization issues if any
-        const deployJson = Deploy.toJSON(deploy);
+        let deployJson: any;
+
+        // Check if deploy is already a plain JSON object (from wallet signing)
+        // or if it's a Deploy instance that needs serialization
+        if (deploy && typeof deploy.toJSON === 'function') {
+            // It's a Deploy instance - serialize it
+            deployJson = Deploy.toJSON(deploy);
+        } else {
+            // It's already JSON (from wallet signing)
+            deployJson = deploy;
+        }
+
         return this.sendDeployRaw(deployJson);
     }
 

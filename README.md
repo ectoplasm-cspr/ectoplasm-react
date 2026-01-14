@@ -6,6 +6,7 @@ A decentralized exchange (DEX) frontend for the Casper Network, built with React
 
 - **Token Swaps**: Swap tokens using AMM (Automated Market Maker) pools
 - **Liquidity Provision**: Add and remove liquidity from trading pairs
+- **Liquid Staking (LST)**: Stake CSPR to receive sCSPR tokens that earn staking rewards
 - **Wallet Integration**: Connect via CasperWallet extension or CSPR.click
 - **Multi-Contract Support**: Toggle between Odra and Native contract versions
 - **Real-time Balances**: Fetch token balances directly from the blockchain
@@ -98,23 +99,37 @@ src/
 
 ## Deployed Contracts (Testnet)
 
-### Native Contracts (Casper 2.0)
+**Network**: Casper Testnet (`casper-test`)  
+**Deployment Date**: January 4, 2026
+
+### DEX Contracts
 
 | Contract | Hash |
 |----------|------|
-| Factory | `hash-8a4f4ffeab7a7c831359ee593b2edb5ee34333b7223b63f5ec906e42bc325ced` |
-| ECTO | `hash-01b5a8092c45fb6276c5c3cf6b4c22730856cf0fc0051b078cf86010147d7a6f` |
-| USDC | `hash-da800ac07a00e316bc84e3c1b614cfd9ff2db87b90904e30fa3a1bc5a632c2f0` |
-| WETH | `hash-38fa5e20e2f80fb777e6036e2582adb98b387d785828a672ff2cea4aeb9fa990` |
-| WBTC | `hash-e7ff916e02b42268d755b8aaffa9e8ae09e00c8d99c0db628d02c925020bd8fb` |
+| Factory | `hash-464e54c4e050fb995ac7bb3a9a4eef08f0b9010daf490ceb062ab5f7a8149263` |
+| Router | `hash-1e5163f46dbc5aed9abe53bbf346aaa8d7239510dd32e6a06cfc9b16cce1de99` |
+| WCSPR (LP Token) | `hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7` |
 
-### Trading Pairs (Native)
+### Tokens
 
-| Pair | Hash |
-|------|------|
-| ECTO/USDC | `hash-2c2287ee64b4b372227fcd9b448d664e270d949e9b37830dd28a0b8e8e5401b9` |
-| WETH/USDC | `hash-6759b832fe25e36288f9e63591242b54fc3a8b141a09b232a5a48ee2698d0e20` |
-| WBTC/USDC | `hash-0fb2b764080ef5d8912c94c7cc305625e83999f77e8f7088741dc62e8b65ecc7` |
+| Token | Symbol | Decimals | Hash |
+|-------|--------|----------|------|
+| Ectoplasm Token | ECTO | 18 | `hash-1a4edcb64811ae6ce8468fc23f562aa210e26f2b53f7e2968a3bfdaf0702d5c8` |
+| USD Coin | USDC | 6 | `hash-325032bbeb00e82595b009b722c1c0bd471f2827b5404a3f6fbf196d1d77a888` |
+| Wrapped Ether | WETH | 18 | `hash-cf0db4233c95cfbd4639810578d450ffec09add32c8995f78515106f6a282120` |
+| Wrapped Bitcoin | WBTC | 8 | `hash-2dca075e7804872e367e40a64ff0d7c73bcd0a7ca30a98b9a18cb245911b1a6f` |
+| Staked CSPR | sCSPR | 18 | `hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d` |
+
+### LST (Liquid Staking Token) Contracts
+
+| Contract | Hash |
+|----------|------|
+| sCSPR Token | `hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d` |
+| Staking Manager | `hash-626f1cb3e344e7ed53ce7b0f4e4b9c6d30aaff724be88a9380d8e3f73614e3b2` |
+
+### Trading Pairs
+
+Pairs are created dynamically via the Factory contract.
 
 ## Tech Stack
 
