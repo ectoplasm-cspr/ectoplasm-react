@@ -103,8 +103,8 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     icon: null,
   },
   WCSPR: {
-    hash: envGet('WCSPR_CONTRACT_HASH') || null,
-    packageHash: stripHashPrefix(envGet('WCSPR_PACKAGE_HASH')) || null,
+    hash: envGet('WCSPR_CONTRACT_HASH') || "hash-eec2ae2bf596ae3ab4205669447fbb18adf848e2e5c1dfcefa39169d8399a4e7",
+    packageHash: stripHashPrefix(envGet('WCSPR_PACKAGE_HASH')) || "6adfa0f394cce4526c851136dc514d2d616102373a6e05abaaae1fd0f54a2c1b",
     symbol: 'WCSPR',
     decimals: 18,
     name: 'Wrapped CSPR',
@@ -303,15 +303,15 @@ export const EctoplasmConfig = {
   } {
     return this._contractVersion === "native"
       ? {
-          version: "native",
-          label: "Native",
-          description: "Casper 2.0 native contracts",
-        }
+        version: "native",
+        label: "Native",
+        description: "Casper 2.0 native contracts",
+      }
       : {
-          version: "odra",
-          label: "Odra",
-          description: "Odra framework contracts",
-        };
+        version: "odra",
+        label: "Odra",
+        description: "Odra framework contracts",
+      };
   },
 
   // Toggle between versions
