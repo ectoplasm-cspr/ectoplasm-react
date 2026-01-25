@@ -1,14 +1,22 @@
 // @ts-nocheck
 /**
  * LST Service - Liquid Staking Token contract interactions
- *
- * NOTE: This file uses casper-js-sdk v4 APIs. It needs to be migrated to v5.
- * The @ts-nocheck directive is a temporary workaround.
+ * Migrated to casper-js-sdk v5 (createStakeDeploy and signAndSendDeploy)
+ * Other functions still need migration
  */
 
-import * as sdk from 'casper-js-sdk';
-const CasperSDK = (sdk as any).default ?? sdk;
-const { CLPublicKey, CLValueBuilder, RuntimeArgs, DeployUtil } = CasperSDK;
+import {
+  Args,
+  CLValue,
+  Deploy,
+  DeployHeader,
+  ExecutableDeployItem,
+  Key,
+  PublicKey,
+  StoredContractByHash,
+  ContractHash,
+  AccountHash,
+} from 'casper-js-sdk';
 import { EctoplasmConfig } from '../config/ectoplasm';
 import { CasperService } from './casper';
 
@@ -31,7 +39,7 @@ export interface WithdrawParams {
 /**
  * Create a deploy to stake CSPR and receive sCSPR
  */
-export async function createStakeDeploy(params: StakeParams): Promise<DeployUtil.Deploy> {
+export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
   const { publicKey, amount, validatorAddress } = params;
   
   // Get staking manager contract hash
@@ -42,34 +50,37 @@ export async function createStakeDeploy(params: StakeParams): Promise<DeployUtil
 
   // Convert CSPR to motes (1 CSPR = 1,000,000,000 motes)
   const amountFloat = parseFloat(amount);
-  const amountInMotes = Math.floor(amountFloat * 1_000_000_000);
+  const amountInMotes = BigInt(Math.floor(amountFloat * 1_000_000_000));
   
-  // Strip account-hash- prefix from validator address
-  const validatorHashHex = validatorAddress.replace('account-hash-', '');
+  // Parse public key
+  const pk = PublicKey.fromHex(publicKey);
   
-  // Build runtime arguments
-  const args = RuntimeArgs.fromMap({
-    validator: CLValueBuilder.key(CLValueBuilder.byteArray(hexToBytes(validatorHashHex))),
-    cspr_amount: CLValueBuilder.u256(amountInMotes.toString()),
+  // Build runtime arguments using v5 API
+  // The validator should be an AccountHash (strip account-hash- prefix)
+  const validatorHash = validatorAddress.replace('account-hash-', '');
+  const args = Args.fromMap({
+    validator: CLValue.newCLKey(Key.newKey(`account-hash-${validatorHash}`)),
+    cspr_amount: CLValue.newCLUInt256(amountInMotes.toString()),
   });
 
-  // Create deploy
-  const deployParams = new DeployUtil.DeployParams(
-    CLPublicKey.fromHex(publicKey),
-    'casper-test',
-    1, // gas price tolerance
-    1800000 // ttl (30 minutes)
-  );
-
-  const payment = DeployUtil.standardPayment(5_000_000_000); // 5 CSPR payment
-
-  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-    hexToBytes(stakingManagerHash.replace('hash-', '')),
+  // Create deploy using v5 API
+  // NOTE: This is a demo contract that mints sCSPR without actual CSPR transfer
+  const session = new ExecutableDeployItem();
+  session.storedContractByHash = new StoredContractByHash(
+    ContractHash.newContract(stakingManagerHash.replace('hash-', '')),
     'stake',
     args
   );
-
-  return DeployUtil.makeDeploy(deployParams, session, payment);
+  
+  // Standard gas payment
+  const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR
+  
+  const header = DeployHeader.default();
+  header.account = pk;
+  header.chainName = 'casper-test';
+  header.gasPrice = 1;
+  
+  return Deploy.makeDeploy(header, payment, session);
 }
 
 /**
@@ -162,13 +173,13 @@ function hexToBytes(hex: string): Uint8Array {
 /**
  * Sign and send a deploy using the connected wallet
  */
-export async function signAndSendDeploy(deploy: DeployUtil.Deploy, publicKey: string): Promise<string> {
+export async function signAndSendDeploy(deploy: Deploy, publicKey: string): Promise<string> {
   const w = window as any;
   
   // Try CasperWallet first
   const casperWallet = w.CasperWalletProvider?.();
   if (casperWallet) {
-    const deployJSON = DeployUtil.deployToJson(deploy);
+    const deployJSON = Deploy.toJSON(deploy);
     console.log('Requesting signature from wallet...');
     
     try {
@@ -181,12 +192,8 @@ export async function signAndSendDeploy(deploy: DeployUtil.Deploy, publicKey: st
         throw new Error('User cancelled signing');
       }
       
-      // Add the signature to the deploy
-      const signedDeploy = DeployUtil.setSignature(
-        deploy,
-        signatureResponse.signature,
-        CLPublicKey.fromHex(publicKey)
-      );
+      // Add the signature to the deploy using CasperService helper
+      const signedDeploy = CasperService.deployFromWalletResponse(deploy, signatureResponse, publicKey);
       
       console.log('Deploy signed, submitting to network...');
       
@@ -202,7 +209,7 @@ export async function signAndSendDeploy(deploy: DeployUtil.Deploy, publicKey: st
   // Try CSPR.click
   const csprClick = w.csprclick || w.CsprClickUI;
   if (csprClick) {
-    const deployJSON = DeployUtil.deployToJson(deploy);
+    const deployJSON = Deploy.toJSON(deploy);
     const result = await csprClick.send(JSON.stringify(deployJSON));
     return result.deployHash || result.deploy_hash;
   }

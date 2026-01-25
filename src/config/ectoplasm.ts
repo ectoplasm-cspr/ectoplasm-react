@@ -50,6 +50,7 @@ export interface ContractsConfig {
   // LST (Liquid Staking Token) contracts
   scsprToken?: string;
   stakingManager?: string;
+  stakingManagerPackage?: string;
 }
 
 export interface LaunchpadConfig {
@@ -86,11 +87,13 @@ const ODRA_CONTRACTS: ContractsConfig = {
   pairs: {
     // Pairs will be created dynamically via factory
   },
-  // LST Contracts
+  // LST Contracts (Updated with deployed hashes)
   scsprToken:
     "hash-01bb503f421ba93ad85e1b3f4f2f6218864a7623d4d7004f1fb7a0ca7923787d",
   stakingManager:
-    "hash-7c822b1940f73cbf48606a7909898da45f64b6c34539393d8e4e6c305dec40d8",
+    "hash-767c8ee7680685fcba84aeb72b99e2c8a275d59ac4d6a29e8f57deb1e952eec9", // Using package hash (works better with SDK)
+  stakingManagerPackage:
+    "hash-626f1cb3e344e7ed53ce7b0f4e4b9c6d30aaff724be88a9380d8e3f73614e3b2",
 };
 
 const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {

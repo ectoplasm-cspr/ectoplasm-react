@@ -133,7 +133,8 @@ export class DexClient {
     constructor(config: DexConfig) {
         this.config = config;
         // Use the configured node URL (it might be a proxy e.g. /_casper/testnet)
-        this.rpcClient = new RpcClient(new HttpHandler(config.nodeUrl));
+        // SDK v5: RpcClient takes URL string directly
+        this.rpcClient = new RpcClient(config.nodeUrl);
     }
 
     // ============ Read Functions ============
@@ -143,8 +144,7 @@ export class DexClient {
      */
     async getPairReserves(pairHash: string): Promise<{ reserve0: bigint; reserve1: bigint }> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
 
             // The Factory returns package hashes, but we need contract hashes to query state
             // Resolve package hash to contract hash
@@ -242,8 +242,7 @@ export class DexClient {
      */
     async getPairAddress(tokenA: string, tokenB: string): Promise<string | null> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
 
             const factoryHash = this.config.factoryHash;
 
@@ -291,7 +290,7 @@ export class DexClient {
      */
     async getAllPairs(): Promise<string[]> {
         const stateRoot = await this.normalizeStateRootHash(
-            (await this.rpcClient.getStateRootHashLatest()).stateRootHash
+            await this.getStateRootHash()
         );
 
         const factoryHash = this.config.factoryHash;
@@ -394,7 +393,13 @@ export class DexClient {
             const publicKey = PublicKey.fromHex(publicKeyHex);
 
             // 1. Get Account Info to find Main Purse
-            const accountInfo = await this.rpcClient.getAccountInfo(null, { publicKey });
+            const stateRootHash = await this.getStateRootHash();
+            const accountInfo = await this.rpcRequest('state_get_account_info', {
+                state_identifier: {
+                    PublicKey: publicKey.toHex()
+                },
+                state_root_hash: stateRootHash
+            });
             const account = accountInfo.account || accountInfo;
 
             if (!account || !account.mainPurse) {
@@ -402,9 +407,8 @@ export class DexClient {
             }
 
             // 2. Query Balance using state_get_balance directly via rpcRequest
-            const stateRoot = await this.rpcClient.getStateRootHashLatest();
             const balanceResult = await this.rpcRequest('state_get_balance', {
-                state_root_hash: this.normalizeStateRootHash(stateRoot.stateRootHash),
+                state_root_hash: stateRootHash,
                 purse_uref: account.mainPurse
             });
 
@@ -420,8 +424,7 @@ export class DexClient {
      */
     async getTokenBalance(tokenContractHash: string, accountHash: string): Promise<bigint> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
 
             const cleanTokenHash = this.normalizeContractKey(tokenContractHash);
 
@@ -476,8 +479,7 @@ export class DexClient {
         spenderPackageHash: string
     ): Promise<bigint> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
 
             const cleanTokenHash = this.normalizeContractKey(tokenPackageHash);
 
@@ -522,8 +524,7 @@ export class DexClient {
      */
     async getTotalSupply(tokenContractHash: string): Promise<bigint> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
             const cleanHash = this.normalizeContractKey(tokenContractHash);
 
             const contractData: any = await this.rpcRequest('state_get_item', {
@@ -687,6 +688,14 @@ export class DexClient {
     }
 
     // Raw RPC helper
+    /**
+     * Helper to get latest state root hash
+     */
+    private async getStateRootHash(): Promise<string> {
+        const result = await this.rpcRequest('chain_get_state_root_hash', {});
+        return result.state_root_hash;
+    }
+
     async rpcRequest(method: string, params: any): Promise<any> {
         const body = {
             jsonrpc: '2.0',
@@ -1066,8 +1075,7 @@ export class DexClient {
         }
 
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
             const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
 
             // Resolve package hash to contract hash
@@ -1120,8 +1128,7 @@ export class DexClient {
             }
 
             // Get state root hash
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
 
             // Resolve package hash to contract hash
             const factoryPackageHash = this.normalizeContractKey(this.config.launchpad.tokenFactoryHash);
@@ -1334,8 +1341,7 @@ export class DexClient {
      */
     async getCurveState(curveHash: string): Promise<CurveState | null> {
         try {
-            const stateRootWrapper = await this.rpcClient.getStateRootHashLatest();
-            const stateRootHash = this.normalizeStateRootHash(stateRootWrapper.stateRootHash);
+            const stateRootHash = await this.getStateRootHash();
             const cleanHash = this.normalizeContractKey(curveHash);
 
             const contractData: any = await this.rpcRequest('state_get_item', {
@@ -1429,7 +1435,7 @@ export class DexClient {
         for (let i = 0; i < maxTries; i++) {
             try {
                 // Use getDeploy instead of getDeployInfo for newer SDK
-                const result = await this.rpcClient.getDeploy(deployHash);
+                const result = await this.rpcRequest('info_get_deploy', { deploy_hash: deployHash });
                 // console.log('Deploy Info:', JSON.stringify(result, null, 2));
 
                 // Based on logs, the structure is executionInfo -> executionResult

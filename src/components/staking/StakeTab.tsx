@@ -47,8 +47,8 @@ export function StakeTab() {
       return;
     }
 
-    if (parseFloat(csprAmount) < 100) {
-      alert('Minimum stake amount is 100 CSPR');
+    if (parseFloat(csprAmount) < 1) {
+      alert('Minimum stake amount is 1 CSPR');
       return;
     }
 
@@ -183,7 +183,7 @@ export function StakeTab() {
       <div className="info-section">
         <div className="info-row">
           <span>Minimum Stake:</span>
-          <span>100 CSPR</span>
+          <span>1 CSPR</span>
         </div>
         <div className="info-row">
           <span>Exchange Rate:</span>
@@ -198,7 +198,7 @@ export function StakeTab() {
       <button
         className="stake-button primary-button"
         onClick={handleStake}
-        disabled={isStaking || !csprAmount || parseFloat(csprAmount) < 100}
+        disabled={isStaking || !csprAmount || parseFloat(csprAmount) < 1}
       >
         {isStaking ? 'Staking...' : 'Stake CSPR'}
       </button>
