@@ -1,24 +1,21 @@
-// @ts-nocheck
 /**
  * CasperService - Blockchain interaction module for Ectoplasm DEX
  * TypeScript port for React application
- *
- * NOTE: This file uses casper-js-sdk v4 APIs. It needs to be migrated to v5.
- * The @ts-nocheck directive is a temporary workaround.
  */
 
-import * as sdk from 'casper-js-sdk';
-const CasperSDK = (sdk as any).default ?? sdk;
-const {
-  RpcClient,
-  HttpHandler,
-  DeployUtil,
-  RuntimeArgs,
-  CLPublicKey,
-  CLValueBuilder,
-  CLList,
-  PublicKey
-} = CasperSDK;
+import {
+  Args,
+  CLTypeByteArray,
+  CLValue,
+  ContractHash,
+  Deploy,
+  DeployHeader,
+  ExecutableDeployItem,
+  Key,
+  PublicKey,
+  StoredContractByHash
+} from 'casper-js-sdk';
+import { blake2bHex } from 'blakejs';
 import { EctoplasmConfig, TokenConfig } from '../config/ectoplasm';
 import { hexToBytes, formatTokenAmount, parseTokenAmount } from '../utils/format';
 
@@ -58,10 +55,27 @@ export interface DeployResult {
 }
 
 class CasperServiceClass {
-  private client: any = null;
   private initialized: boolean = false;
   private sdkAvailable: boolean = false;
   private initError: string | null = null;
+
+  normalizePublicKeyHex(value: string): string {
+    const hex = value.replace(/^0x/i, '').trim();
+    const prefix = hex.slice(0, 2).toLowerCase();
+    if (prefix === '00' || prefix === '01' || prefix === '02') return hex;
+    // Some providers return the raw 32-byte ED25519 key without the algorithm tag.
+    if (hex.length === 64) return `01${hex}`;
+    return hex;
+  }
+
+  normalizeContractHashHex(value: string): string {
+    const v = (value || '').trim().replace(/^0x/i, '');
+    return v.replace(/^(hash-|entity-contract-)/, '');
+  }
+
+  private parsePublicKey(hex: string): PublicKey {
+    return PublicKey.fromHex(this.normalizePublicKeyHex(hex));
+  }
 
   /**
    * Initialize the Casper client
@@ -69,23 +83,11 @@ class CasperServiceClass {
   init(): boolean {
     if (this.initialized) return this.sdkAvailable;
 
-    const network = EctoplasmConfig.getNetwork();
-
-    try {
-      // SDK v5 uses RpcClient with HttpHandler
-      const handler = new HttpHandler(network.rpcUrl);
-      this.client = new RpcClient(handler);
-      this.initialized = true;
-      this.sdkAvailable = true;
-      console.log(`CasperService initialized for ${network.name}`);
-      return true;
-    } catch (error: any) {
-      this.initError = `Failed to initialize: ${error.message}`;
-      console.error('CasperService:', this.initError);
-      this.initialized = true;
-      this.sdkAvailable = false;
-      return false;
-    }
+    // v5 SDK no longer exposes CasperClient; this service uses direct RPC `fetch` calls.
+    // Treat initialization as available if we're in a browser environment.
+    this.initialized = true;
+    this.sdkAvailable = true;
+    return true;
   }
 
   isAvailable(): boolean {
@@ -99,7 +101,7 @@ class CasperServiceClass {
 
   private ensureInit(): void {
     this.init();
-    if (!this.sdkAvailable || !this.client) {
+    if (!this.sdkAvailable) {
       throw new Error(this.initError || 'CasperService not initialized');
     }
   }
@@ -123,37 +125,213 @@ class CasperServiceClass {
     const decimals = tokenConfig?.decimals || 18;
 
     try {
-      const publicKey = CLPublicKey.fromHex(publicKeyHex);
-      const accountHash = publicKey.toAccountHashStr();
-      const contractHash = tokenHash.replace('hash-', '');
+      const publicKey = this.parsePublicKey(publicKeyHex);
+      const accountHash = publicKey.accountHash().toPrefixedString();
+      const contractHash = tokenHash.replace(/^(hash-|entity-contract-)/, '');
 
       console.log('[getTokenBalance] Derived values:', { accountHash, contractHash });
 
-      // Try standard CEP-18 dictionary query with base64 key format
-      // CEP-18 uses base64(Key bytes) for dictionary keys
+      // Standard CEP-18 ContractNamedKey dictionary query is unreliable for Odra tokens.
+      // When running in Odra mode, skip it to avoid noisy RPC errors.
+      if (EctoplasmConfig.contractVersion !== 'odra') {
+        try {
+          const balance = await this.queryCep18Balance(contractHash, accountHash);
+          console.log('[getTokenBalance] Query result:', balance.toString());
+          if (balance > BigInt(0)) {
+            return {
+              raw: balance,
+              formatted: formatTokenAmount(balance.toString(), decimals),
+              decimals
+            };
+          }
+        } catch (e) {
+          console.log('[getTokenBalance] CEP-18 query failed:', e);
+        }
+      }
+
+      // Fallback for Odra-style CEP-18 storage:
+      // Resolve dictionary seed URef from token named keys (balances/state) and query by URef.
       try {
-        const balance = await this.queryCep18Balance(contractHash, accountHash);
-        console.log('[getTokenBalance] Query result:', balance.toString());
-        if (balance > BigInt(0)) {
+        const odraBalance = await this.queryOdraTokenBalanceByURef(tokenHash, accountHash);
+        console.log('[getTokenBalance] Odra(URef) query result:', odraBalance.toString());
+        if (odraBalance > BigInt(0)) {
           return {
-            raw: balance,
-            formatted: formatTokenAmount(balance.toString(), decimals),
+            raw: odraBalance,
+            formatted: formatTokenAmount(odraBalance.toString(), decimals),
             decimals
           };
         }
       } catch (e) {
-        console.log('[getTokenBalance] CEP-18 query failed:', e);
+        console.log('[getTokenBalance] Odra(URef) query failed:', e);
       }
-
-      // Note: Odra CEP-18 tokens use a different storage pattern
-      // The "balances" dictionary is created dynamically and may not be accessible via standard RPC
-      // For Odra tokens, CSPR.cloud API is recommended once indexing is improved
 
       return { raw: BigInt(0), formatted: '0', decimals };
     } catch (error: any) {
       console.error('[getTokenBalance] Error:', error);
       return { raw: BigInt(0), formatted: '0', decimals };
     }
+  }
+
+  private async getStateRootHash(): Promise<string> {
+    const network = EctoplasmConfig.getNetwork();
+    const res = await fetch(network.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'chain_get_state_root_hash' })
+    });
+    const json = await res.json();
+    const stateRootHash = json?.result?.state_root_hash;
+    if (!stateRootHash) {
+      throw new Error('Could not get state root hash');
+    }
+    return stateRootHash;
+  }
+
+  private async queryOdraTokenBalanceByURef(tokenHash: string, accountHash: string): Promise<bigint> {
+    const network = EctoplasmConfig.getNetwork();
+    const stateRootHash = await this.getStateRootHash();
+
+    const cleanTokenHash = tokenHash.replace(/^(hash-|entity-contract-)/, '');
+    const contractKeys = [`entity-contract-${cleanTokenHash}`, `hash-${cleanTokenHash}`];
+
+    // 1) Find the seed URef for balances.
+    let balancesURef: string | null = null;
+    for (const key of contractKeys) {
+      const res = await fetch(network.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'state_get_item',
+          params: { state_root_hash: stateRootHash, key, path: [] }
+        })
+      });
+      const json = await res.json();
+      if (json?.error) continue;
+
+      const namedKeys = json?.result?.stored_value?.Contract?.named_keys;
+      if (!Array.isArray(namedKeys)) continue;
+
+      balancesURef = namedKeys.find((k: any) => k?.name === 'balances')?.key
+        ?? namedKeys.find((k: any) => k?.name === 'state')?.key
+        ?? null;
+      if (balancesURef) break;
+    }
+
+    if (!balancesURef) {
+      throw new Error(`No 'balances' or 'state' named key found for ${tokenHash}`);
+    }
+
+    // 2) Try candidate dictionary keys.
+    const rawAccountHash = accountHash.replace('account-hash-', '');
+    const candidates = this.getBalanceKeyCandidates(accountHash, rawAccountHash);
+
+    for (const dictKey of candidates) {
+      const val = await this.queryDictionaryValueByURef(stateRootHash, balancesURef, dictKey);
+      if (val !== null) return val;
+    }
+
+    return BigInt(0);
+  }
+
+  private async queryDictionaryValueByURef(stateRootHash: string, seedURef: string, dictKey: string): Promise<bigint | null> {
+    const network = EctoplasmConfig.getNetwork();
+    try {
+      const res = await fetch(network.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'state_get_dictionary_item',
+          params: {
+            state_root_hash: stateRootHash,
+            dictionary_identifier: {
+              URef: {
+                seed_uref: seedURef,
+                dictionary_item_key: dictKey
+              }
+            }
+          }
+        })
+      });
+      const json = await res.json();
+      if (json?.error) return null;
+
+      const parsed = json?.result?.stored_value?.CLValue?.parsed;
+      return this.parseU256Like(parsed);
+    } catch {
+      return null;
+    }
+  }
+
+  private parseU256Like(parsed: any): bigint | null {
+    try {
+      if (parsed === null || parsed === undefined) return null;
+      if (typeof parsed === 'string' || typeof parsed === 'number') {
+        return BigInt(parsed.toString());
+      }
+      if (Array.isArray(parsed)) {
+        // List<U8> little-endian bytes, sometimes with a 1-byte length prefix.
+        let bytes = parsed as number[];
+        if (bytes.length > 0 && bytes[0] === bytes.length - 1) {
+          bytes = bytes.slice(1);
+        }
+        let result = BigInt(0);
+        for (let i = 0; i < bytes.length; i++) {
+          result += BigInt(bytes[i]) * (BigInt(256) ** BigInt(i));
+        }
+        return result;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private getBalanceKeyCandidates(accountHash: string, rawAccountHash: string): string[] {
+    const candidates: string[] = [];
+
+    // Common / naive candidates
+    candidates.push('balances');
+    candidates.push(`balances_${accountHash}`);
+    candidates.push(`balance_${accountHash}`);
+    candidates.push(`balances${accountHash}`);
+    candidates.push(accountHash);
+    candidates.push(rawAccountHash);
+
+    // CEP-18 base64(Key(AccountHash))
+    try {
+      const keyBytes = new Uint8Array(33);
+      keyBytes[0] = 0x00;
+      keyBytes.set(hexToBytes(rawAccountHash), 1);
+      candidates.push(btoa(String.fromCharCode(...keyBytes)));
+    } catch {
+      // ignore
+    }
+
+    // Odra hashed keys (index + tag + account-hash) -> blake2b-256
+    candidates.push(this.generateOdraKey(5, rawAccountHash, false));
+    for (let i = 0; i <= 10; i++) {
+      if (i === 5) continue;
+      candidates.push(this.generateOdraKey(i, rawAccountHash, false));
+      candidates.push(this.generateOdraKey(i, rawAccountHash, true));
+    }
+
+    return candidates;
+  }
+
+  private generateOdraKey(index: number, accountHashHex: string, littleEndian: boolean): string {
+    const indexBytes = new Uint8Array(4);
+    new DataView(indexBytes.buffer).setUint32(0, index, littleEndian);
+    const tagBytes = new Uint8Array([0]);
+    const hashBytes = new Uint8Array(accountHashHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    const combined = new Uint8Array(indexBytes.length + tagBytes.length + hashBytes.length);
+    combined.set(indexBytes);
+    combined.set(tagBytes, indexBytes.length);
+    combined.set(hashBytes, indexBytes.length + tagBytes.length);
+    return blake2bHex(combined, undefined, 32);
   }
 
   /**
@@ -222,10 +400,9 @@ class CasperServiceClass {
     // Ensure contractHash doesn't have any prefix
     const cleanContractHash = contractHash.replace(/^(hash-|entity-contract-)/, '');
 
-    // Try Casper 2.0 entity-contract prefix first (for native contracts)
-    const prefixes = ['entity-contract-', 'hash-'];
-
-    for (const prefix of prefixes) {
+    // ContractNamedKey expects a legacy contract key (hash-...).
+    // On current nodes this call fails with `Failed to parse query key` when using `entity-contract-...`.
+    for (const prefix of ['hash-']) {
       const requestBody = {
         jsonrpc: '2.0',
         id: 2,
@@ -394,8 +571,8 @@ class CasperServiceClass {
     if (useCSPRCloud) {
       console.log('[getAllBalances] Using CSPR.cloud API path (Odra contracts)');
       try {
-        const publicKey = CLPublicKey.fromHex(publicKeyHex);
-        const accountHash = publicKey.toAccountHashStr();
+        const publicKey = PublicKey.fromHex(publicKeyHex);
+        const accountHash = publicKey.accountHash().toPrefixedString();
         const csprCloudBalances = await this.getAllTokenBalancesFromCsprCloud(accountHash);
 
         for (const [symbol, rawBalance] of Object.entries(csprCloudBalances)) {
@@ -472,20 +649,38 @@ class CasperServiceClass {
       const factoryHash = EctoplasmConfig.contracts.factory;
       console.log('[CasperService.getPairAddress] factoryHash:', factoryHash);
 
-      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
+      const stateRootHash = await this.getStateRootHash();
       const [token0, token1] = this.sortTokens(tokenA, tokenB);
       const pairKey = `${token0.replace('hash-', '')}_${token1.replace('hash-', '')}`;
       console.log('[CasperService.getPairAddress] pairKey:', pairKey);
 
-      const result = await this.client!.nodeClient.getDictionaryItemByName(
-        stateRootHash,
-        factoryHash.replace('hash-', ''),
-        'pairs',
-        pairKey
-      );
+      const response = await fetch(EctoplasmConfig.getNetwork().rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'state_get_dictionary_item',
+          params: {
+            state_root_hash: stateRootHash,
+            dictionary_identifier: {
+              ContractNamedKey: {
+                key: factoryHash.startsWith('hash-') ? factoryHash : `hash-${factoryHash}`,
+                dictionary_name: 'pairs',
+                dictionary_item_key: pairKey
+              }
+            }
+          }
+        })
+      });
+      const json = await response.json();
 
-      console.log('[CasperService.getPairAddress] result:', result?.CLValue?.data);
-      return result?.CLValue?.data || null;
+      const parsed = json?.result?.stored_value?.CLValue?.parsed;
+      if (typeof parsed === 'string') {
+        console.log('[CasperService.getPairAddress] result:', parsed);
+        return parsed;
+      }
+      return null;
     } catch (error: any) {
       console.log('[CasperService.getPairAddress] Error:', error.message);
       if (error.message?.includes('ValueNotFound') || error.message?.includes('Failed to find')) {
@@ -781,21 +976,35 @@ class CasperServiceClass {
     if (!tokenHash) return false;
 
     try {
-      const accountHash = CLPublicKey.fromHex(ownerPublicKey).toAccountHashStr();
+      const accountHash = this.parsePublicKey(ownerPublicKey).accountHash().toPrefixedString();
       const routerHash = EctoplasmConfig.contracts.router;
-      const stateRootHash = await this.client!.nodeClient.getStateRootHash();
       const ownerKey = accountHash.replace('account-hash-', '');
       const spenderKey = routerHash.replace('hash-', '');
       const allowanceKey = `${ownerKey}_${spenderKey}`;
 
-      const result = await this.client!.nodeClient.getDictionaryItemByName(
-        stateRootHash,
-        tokenHash.replace('hash-', ''),
-        'allowances',
-        allowanceKey
-      );
-
-      const currentAllowance = BigInt(result?.CLValue?.data?.toString() || '0');
+      const stateRootHash = await this.getStateRootHash();
+      const res = await fetch(EctoplasmConfig.getNetwork().rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'state_get_dictionary_item',
+          params: {
+            state_root_hash: stateRootHash,
+            dictionary_identifier: {
+              ContractNamedKey: {
+                key: tokenHash.startsWith('hash-') ? tokenHash : `hash-${tokenHash}`,
+                dictionary_name: 'allowances',
+                dictionary_item_key: allowanceKey
+              }
+            }
+          }
+        })
+      });
+      const json = await res.json();
+      const parsed = json?.result?.stored_value?.CLValue?.parsed;
+      const currentAllowance = this.parseU256Like(parsed) ?? BigInt(0);
       return currentAllowance >= amount;
     } catch (error) {
       return false;
@@ -809,32 +1018,28 @@ class CasperServiceClass {
   ): any {
     this.ensureInit();
 
-    const publicKey = CLPublicKey.fromHex(publicKeyHex);
+    const publicKey = this.parsePublicKey(publicKeyHex);
     const routerHash = EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.approve;
     const network = EctoplasmConfig.getNetwork();
 
-    const args = RuntimeArgs.fromMap({
-      spender: CLValueBuilder.key(
-        CLValueBuilder.byteArray(hexToBytes(routerHash))
-      ),
-      amount: CLValueBuilder.u256(amount.toString())
+    const args = Args.fromMap({
+      spender: CLValue.newCLKey(Key.newKey(routerHash)),
+      amount: CLValue.newCLUInt256(amount.toString())
     });
 
-    return DeployUtil.makeDeploy(
-      new DeployUtil.DeployParams(
-        publicKey,
-        network.chainName,
-        1,
-        3600000
-      ),
-      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        hexToBytes(tokenHash),
-        'approve',
-        args
-      ),
-      DeployUtil.standardPayment(gasLimit)
+    const session = new ExecutableDeployItem();
+    session.storedContractByHash = new StoredContractByHash(
+      ContractHash.newContract(this.normalizeContractHashHex(tokenHash)),
+      'approve',
+      args
     );
+    const payment = ExecutableDeployItem.standardPayment(gasLimit);
+    const header = DeployHeader.default();
+    header.account = publicKey;
+    header.chainName = network.chainName;
+    header.gasPrice = 1;
+    return Deploy.makeDeploy(header, payment, session);
   }
 
   buildSwapDeploy(
@@ -848,7 +1053,7 @@ class CasperServiceClass {
       throw new Error('Invalid quote for swap');
     }
 
-    const publicKey = CLPublicKey.fromHex(publicKeyHex);
+    const publicKey = this.parsePublicKey(publicKeyHex);
     const routerHash = EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.swap;
     const network = EctoplasmConfig.getNetwork();
@@ -857,33 +1062,77 @@ class CasperServiceClass {
     const slippageMultiplier = BigInt(Math.floor((1 - slippagePercent / 100) * 10000));
     const amountOutMin = quote.amountOutRaw * slippageMultiplier / BigInt(10000);
 
-    const pathList = new CLList([
-      CLValueBuilder.byteArray(hexToBytes(quote.path[0])),
-      CLValueBuilder.byteArray(hexToBytes(quote.path[1]))
+    const path = CLValue.newCLList(new CLTypeByteArray(32), [
+      CLValue.newCLByteArray(hexToBytes(quote.path[0])),
+      CLValue.newCLByteArray(hexToBytes(quote.path[1]))
     ]);
 
-    const args = RuntimeArgs.fromMap({
-      amount_in: CLValueBuilder.u256(quote.amountInRaw.toString()),
-      amount_out_min: CLValueBuilder.u256(amountOutMin.toString()),
-      path: pathList,
-      to: CLValueBuilder.key(CLValueBuilder.byteArray(publicKey.toAccountHash())),
-      deadline: CLValueBuilder.u64(deadline)
+    const args = Args.fromMap({
+      amount_in: CLValue.newCLUInt256(quote.amountInRaw.toString()),
+      amount_out_min: CLValue.newCLUInt256(amountOutMin.toString()),
+      path,
+      to: CLValue.newCLKey(Key.newKey(publicKey.accountHash().toPrefixedString())),
+      deadline: CLValue.newCLUint64(deadline)
     });
 
-    return DeployUtil.makeDeploy(
-      new DeployUtil.DeployParams(
-        publicKey,
-        network.chainName,
-        1,
-        3600000
-      ),
-      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        hexToBytes(routerHash),
-        'swap_exact_tokens_for_tokens',
-        args
-      ),
-      DeployUtil.standardPayment(gasLimit)
+    const session = new ExecutableDeployItem();
+    session.storedContractByHash = new StoredContractByHash(
+      ContractHash.newContract(this.normalizeContractHashHex(routerHash)),
+      'swap_exact_tokens_for_tokens',
+      args
     );
+    const payment = ExecutableDeployItem.standardPayment(gasLimit);
+    const header = DeployHeader.default();
+    header.account = publicKey;
+    header.chainName = network.chainName;
+    header.gasPrice = 1;
+    return Deploy.makeDeploy(header, payment, session);
+  }
+
+  deployFromWalletResponse(unsignedDeploy: Deploy, walletResult: any, signerPublicKeyHex: string): Deploy {
+    if (walletResult?.cancelled) {
+      throw new Error('Transaction cancelled by user');
+    }
+
+    const signerPk = this.parsePublicKey(signerPublicKeyHex);
+
+    // Some wallet versions return just the signature hex as a string.
+    if (typeof walletResult === 'string') {
+      const trimmed = walletResult.trim();
+      const looksJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+      if (!looksJson) {
+        const clean = trimmed.replace(/^0x/i, '');
+        return Deploy.setSignature(unsignedDeploy, hexToBytes(clean), signerPk);
+      }
+    }
+
+    // CasperWallet usually returns `{ signature: "<hex>" }` for a signed deploy.
+    const directSig = walletResult?.signature;
+    if (typeof directSig === 'string' && directSig.length) {
+      const clean = directSig.trim().replace(/^0x/i, '');
+      return Deploy.setSignature(unsignedDeploy, hexToBytes(clean), signerPk);
+    }
+
+    if (directSig instanceof Uint8Array) {
+      return Deploy.setSignature(unsignedDeploy, directSig, signerPk);
+    }
+
+    // Some variants return a JSON string or object containing `approvals[0].signature`.
+    const payload = typeof walletResult === 'string'
+      ? JSON.parse(walletResult)
+      : (walletResult?.deploy ?? walletResult);
+
+    const approvals = payload?.approvals ?? payload?.deploy?.approvals;
+    const approvalSig = Array.isArray(approvals) ? approvals?.[0]?.signature : undefined;
+    if (typeof approvalSig === 'string' && approvalSig.length) {
+      const clean = approvalSig.trim().replace(/^0x/i, '');
+      // Wallet sometimes includes the algo tag byte; Deploy.setSignature expects raw signature bytes.
+      const signerTag = this.normalizePublicKeyHex(signerPublicKeyHex).slice(0, 2).toLowerCase();
+      const rawSig = clean.slice(0, 2).toLowerCase() === signerTag ? clean.slice(2) : clean;
+      return Deploy.setSignature(unsignedDeploy, hexToBytes(rawSig), signerPk);
+    }
+
+    throw new Error('Wallet did not return a signature');
   }
 
   async submitDeploy(signedDeploy: any): Promise<string> {
@@ -896,9 +1145,9 @@ class CasperServiceClass {
 
     // Convert Deploy object to JSON for RPC submission
     let deployJson: any;
-    if (signedDeploy && signedDeploy.hash instanceof Uint8Array && signedDeploy.approvals) {
+    if (signedDeploy instanceof Deploy) {
       console.log('[CasperService.submitDeploy] Converting Deploy object to JSON...');
-      deployJson = DeployUtil.deployToJson(signedDeploy);
+      deployJson = Deploy.toJSON(signedDeploy);
     } else if (typeof signedDeploy === 'string') {
       console.log('[CasperService.submitDeploy] Parsing string deploy...');
       try {
@@ -913,34 +1162,80 @@ class CasperServiceClass {
       deployJson = signedDeploy;
     }
 
-    // Extract just the deploy/transaction if wrapped
+    // Extract just the deploy if wrapped
     const deployData = deployJson.deploy || deployJson;
 
+    const findSuspiciousBase16 = (value: any, path: string, out: Array<{ path: string; value: string; reason: string }>) => {
+      if (value === null || value === undefined) return;
+      if (typeof value === 'string') {
+        const v = value.trim();
+        const hasHashPrefix = /^(hash-|entity-contract-)/.test(v);
+        const maybeHex = /^[0-9a-fA-F]+$/.test(v.replace(/^0x/i, ''));
+        const hex = v.replace(/^0x/i, '');
+        if (hasHashPrefix) out.push({ path, value: v, reason: 'has hash-/entity-contract- prefix' });
+        if (maybeHex && (hex.length % 2 !== 0)) out.push({ path, value: v, reason: `odd-length hex (${hex.length})` });
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, i) => findSuspiciousBase16(item, `${path}[${i}]`, out));
+        return;
+      }
+      if (typeof value === 'object') {
+        for (const [k, v] of Object.entries(value)) {
+          findSuspiciousBase16(v, path ? `${path}.${k}` : k, out);
+        }
+      }
+    };
+
+    // Minimal debug info to quickly identify malformed fields.
+    try {
+      console.log('[CasperService.submitDeploy] deploy.header.account:', deployData?.header?.account);
+      console.log('[CasperService.submitDeploy] deploy.hash:', deployData?.hash);
+      console.log('[CasperService.submitDeploy] deploy.body_hash:', deployData?.body_hash);
+      console.log('[CasperService.submitDeploy] deploy.approvals:', deployData?.approvals);
+      const suspects: Array<{ path: string; value: string; reason: string }> = [];
+      findSuspiciousBase16(deployData, 'deploy', suspects);
+      if (suspects.length) {
+        console.warn('[CasperService.submitDeploy] Suspicious base16 fields:', suspects);
+      }
+    } catch (e) {
+      console.warn('[CasperService.submitDeploy] Debug scan failed:', e);
+    }
+
+    // Guard against non-canonical wallet deploy JSON (camelCase keys, different session shape).
+    if (deployData?.header?.chainName && !deployData?.header?.chain_name) {
+      throw new Error('Non-canonical deploy JSON detected; submit a Deploy instance or Deploy.toJSON() output');
+    }
+
+    // Normalize approval signatures: node expects tag byte (00/01/02) prefix.
+    if (Array.isArray(deployData?.approvals)) {
+      for (const approval of deployData.approvals) {
+        if (!approval || typeof approval.signature !== 'string') continue;
+        const sig = approval.signature.replace(/^0x/i, '');
+        const first = sig.slice(0, 2).toLowerCase();
+        const allowed = new Set(['00', '01', '02']);
+        if (!allowed.has(first)) {
+          const signer = (approval.signer || '').replace(/^0x/i, '');
+          const signerTag = signer.slice(0, 2).toLowerCase();
+          const tag = allowed.has(signerTag) ? signerTag : '01';
+          approval.signature = `${tag}${sig}`;
+        }
+      }
+    }
+
     console.log('[CasperService.submitDeploy] Submitting via direct RPC...');
-    console.log('[CasperService.submitDeploy] Deploy data keys:', Object.keys(deployData));
-    console.log('[CasperService.submitDeploy] Has cancel_hash:', deployData.cancel_hash !== undefined);
-    console.log('[CasperService.submitDeploy] Has hash:', deployData.hash !== undefined);
     const network = EctoplasmConfig.getNetwork();
 
-    // Check if this is a Casper 2.0 transaction (has cancel_hash field) or legacy deploy
-    // Also check the raw JSON string for cancel_hash in case it's nested
-    const dataStr = JSON.stringify(deployData);
-    const isTransaction = deployData.cancel_hash !== undefined || dataStr.includes('"cancel_hash"');
-    const method = isTransaction ? 'transaction_v1_put' : 'account_put_deploy';
-    const paramKey = isTransaction ? 'transaction' : 'deploy';
-    
-    console.log('[CasperService.submitDeploy] Using method:', method);
-
-    // Use direct fetch to submit deploy/transaction
+    // Use direct fetch to submit deploy via account_put_deploy RPC method
     const response = await fetch(network.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: Date.now(),
-        method: method,
+        method: 'account_put_deploy',
         params: {
-          [paramKey]: deployData
+          deploy: deployData
         }
       })
     });
@@ -953,9 +1248,9 @@ class CasperServiceClass {
       throw new Error(result.error.message || `RPC error: ${JSON.stringify(result.error)}`);
     }
 
-    const deployHash = result.result?.deploy_hash || result.result?.transaction_hash?.Version1 || result.result?.transaction_hash;
+    const deployHash = result.result?.deploy_hash;
     if (!deployHash) {
-      throw new Error('No deploy/transaction hash returned from RPC');
+      throw new Error('No deploy hash returned from RPC');
     }
 
     console.log('[CasperService.submitDeploy] Deploy hash:', deployHash);
@@ -975,7 +1270,18 @@ class CasperServiceClass {
       console.log(`[CasperService.waitForDeploy] Poll #${pollCount} for deploy ${deployHash.substring(0, 16)}...`);
 
       try {
-        const result = await this.client!.nodeClient.getDeployInfo(deployHash) as any;
+        const res = await fetch(EctoplasmConfig.getNetwork().rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'info_get_deploy',
+            params: { deploy_hash: deployHash }
+          })
+        });
+        const rpc = await res.json();
+        const result = rpc?.result as any;
         console.log('[CasperService.waitForDeploy] getDeployInfo result:', result);
 
         // Handle Casper 2.0 format (execution_info)
@@ -1057,7 +1363,7 @@ class CasperServiceClass {
 
     this.ensureInit();
 
-    const publicKey = CLPublicKey.fromHex(publicKeyHex);
+    const publicKey = this.parsePublicKey(publicKeyHex);
     const routerHash = EctoplasmConfig.contracts.router;
     const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
     const network = EctoplasmConfig.getNetwork();
@@ -1069,37 +1375,30 @@ class CasperServiceClass {
     console.log('  gasLimit:', gasLimit);
     console.log('  deadline:', deadline);
 
-    const args = RuntimeArgs.fromMap({
-      token_a: CLValueBuilder.key(
-        CLValueBuilder.byteArray(hexToBytes(tokenAHash))
-      ),
-      token_b: CLValueBuilder.key(
-        CLValueBuilder.byteArray(hexToBytes(tokenBHash))
-      ),
-      amount_a_desired: CLValueBuilder.u256(amountADesired.toString()),
-      amount_b_desired: CLValueBuilder.u256(amountBDesired.toString()),
-      amount_a_min: CLValueBuilder.u256(amountAMin.toString()),
-      amount_b_min: CLValueBuilder.u256(amountBMin.toString()),
-      to: CLValueBuilder.key(
-        CLValueBuilder.byteArray(publicKey.toAccountHash())
-      ),
-      deadline: CLValueBuilder.u64(deadline)
+
+    const args = Args.fromMap({
+      token_a: CLValue.newCLKey(Key.newKey(tokenAHash)),
+      token_b: CLValue.newCLKey(Key.newKey(tokenBHash)),
+      amount_a_desired: CLValue.newCLUInt256(amountADesired.toString()),
+      amount_b_desired: CLValue.newCLUInt256(amountBDesired.toString()),
+      amount_a_min: CLValue.newCLUInt256(amountAMin.toString()),
+      amount_b_min: CLValue.newCLUInt256(amountBMin.toString()),
+      to: CLValue.newCLKey(Key.newKey(publicKey.accountHash().toPrefixedString())),
+      deadline: CLValue.newCLUint64(deadline)
     });
 
-    const deploy = DeployUtil.makeDeploy(
-      new DeployUtil.DeployParams(
-        publicKey,
-        network.chainName,
-        1,
-        3600000
-      ),
-      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        hexToBytes(routerHash),
-        'add_liquidity',
-        args
-      ),
-      DeployUtil.standardPayment(gasLimit)
+    const session = new ExecutableDeployItem();
+    session.storedContractByHash = new StoredContractByHash(
+      ContractHash.newContract(this.normalizeContractHashHex(routerHash)),
+      'add_liquidity',
+      args
     );
+    const payment = ExecutableDeployItem.standardPayment(gasLimit);
+    const header = DeployHeader.default();
+    header.account = publicKey;
+    header.chainName = network.chainName;
+    header.gasPrice = 1;
+    const deploy = Deploy.makeDeploy(header, payment, session);
 
     console.log('[CasperService.buildAddLiquidityDeploy] Deploy created successfully');
     return deploy;
@@ -1123,52 +1422,31 @@ class CasperServiceClass {
 
     this.ensureInit();
 
-    // Clean the hashes - remove any prefix
-    const cleanTokenHash = tokenHash?.replace(/^(hash-|entity-contract-)/, '');
-    const cleanRecipientHash = recipientHash?.replace(/^(hash-|entity-contract-)/, '');
-
-    console.log('  cleanTokenHash:', cleanTokenHash);
-    console.log('  cleanRecipientHash:', cleanRecipientHash);
-
-    if (!cleanTokenHash || !cleanRecipientHash || !publicKeyHex) {
-      throw new Error(`Invalid arguments: tokenHash=${cleanTokenHash}, recipientHash=${cleanRecipientHash}, publicKeyHex=${publicKeyHex}`);
-    }
-
-    const publicKey = CLPublicKey.fromHex(publicKeyHex);
+    const publicKey = this.parsePublicKey(publicKeyHex);
     const gasLimit = EctoplasmConfig.gasLimits.approve; // Similar gas to approve
     const network = EctoplasmConfig.getNetwork();
 
     console.log('  gasLimit:', gasLimit);
     console.log('  chainName:', network.chainName);
 
-    // Recipient is the Pair contract hash
-    const recipientBytes = hexToBytes(cleanRecipientHash);
-    console.log('  recipientBytes length:', recipientBytes?.length);
-
-    const args = RuntimeArgs.fromMap({
-      recipient: CLValueBuilder.key(
-        CLValueBuilder.byteArray(recipientBytes)
-      ),
-      amount: CLValueBuilder.u256(amount.toString())
+    const args = Args.fromMap({
+      recipient: CLValue.newCLKey(Key.newKey(recipientHash)),
+      amount: CLValue.newCLUInt256(amount.toString())
     });
 
-    const tokenBytes = hexToBytes(cleanTokenHash);
-    console.log('  tokenBytes length:', tokenBytes?.length);
-
-    const deploy = DeployUtil.makeDeploy(
-      new DeployUtil.DeployParams(
-        publicKey,
-        network.chainName,
-        1,
-        3600000
-      ),
-      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        tokenBytes,
-        'transfer',
-        args
-      ),
-      DeployUtil.standardPayment(gasLimit)
+    const session = new ExecutableDeployItem();
+    session.storedContractByHash = new StoredContractByHash(
+      ContractHash.newContract(this.normalizeContractHashHex(tokenHash)),
+      'transfer',
+      args
     );
+
+    const payment = ExecutableDeployItem.standardPayment(gasLimit);
+    const header = DeployHeader.default();
+    header.account = publicKey;
+    header.chainName = network.chainName;
+    header.gasPrice = 1;
+    const deploy = Deploy.makeDeploy(header, payment, session);
 
     console.log('[CasperService.buildTransferDeploy] Deploy created successfully');
     return deploy;
@@ -1187,48 +1465,30 @@ class CasperServiceClass {
 
     this.ensureInit();
 
-    // Clean the pair hash - remove any prefix
-    const cleanPairHash = pairHash?.replace(/^(hash-|entity-contract-)/, '');
-    console.log('  cleanPairHash:', cleanPairHash);
-
-    if (!cleanPairHash || !recipientPublicKeyHex) {
-      throw new Error(`Invalid arguments: pairHash=${cleanPairHash}, recipientPublicKeyHex=${recipientPublicKeyHex}`);
-    }
-
-    const publicKey = CLPublicKey.fromHex(recipientPublicKeyHex);
+    const publicKey = this.parsePublicKey(recipientPublicKeyHex);
     const gasLimit = EctoplasmConfig.gasLimits.addLiquidity;
     const network = EctoplasmConfig.getNetwork();
 
     console.log('  gasLimit:', gasLimit);
     console.log('  chainName:', network.chainName);
 
-    // The 'to' argument is where LP tokens will be minted
-    const accountHash = publicKey.toAccountHash();
-    console.log('  accountHash length:', accountHash?.length);
-
-    const args = RuntimeArgs.fromMap({
-      to: CLValueBuilder.key(
-        CLValueBuilder.byteArray(accountHash)
-      )
+    const args = Args.fromMap({
+      to: CLValue.newCLKey(Key.newKey(publicKey.accountHash().toPrefixedString()))
     });
 
-    const pairBytes = hexToBytes(cleanPairHash);
-    console.log('  pairBytes length:', pairBytes?.length);
-
-    const deploy = DeployUtil.makeDeploy(
-      new DeployUtil.DeployParams(
-        publicKey,
-        network.chainName,
-        1,
-        3600000
-      ),
-      DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-        pairBytes,
-        'mint',
-        args
-      ),
-      DeployUtil.standardPayment(gasLimit)
+    const session = new ExecutableDeployItem();
+    session.storedContractByHash = new StoredContractByHash(
+      ContractHash.newContract(this.normalizeContractHashHex(pairHash)),
+      'mint',
+      args
     );
+
+    const payment = ExecutableDeployItem.standardPayment(gasLimit);
+    const header = DeployHeader.default();
+    header.account = publicKey;
+    header.chainName = network.chainName;
+    header.gasPrice = 1;
+    const deploy = Deploy.makeDeploy(header, payment, session);
 
     console.log('[CasperService.buildMintLiquidityDeploy] Deploy created successfully');
     return deploy;
@@ -1242,8 +1502,8 @@ class CasperServiceClass {
     const network = EctoplasmConfig.getNetwork();
 
     try {
-      const publicKey = CLPublicKey.fromHex(publicKeyHex);
-      const accountHash = publicKey.toAccountHashStr();
+      const publicKey = this.parsePublicKey(publicKeyHex);
+      const accountHash = publicKey.accountHash().toPrefixedString();
       const accountHashHex = accountHash.replace('account-hash-', '');
       const cleanHash = pairHash.replace(/^(hash-|entity-contract-)/, '');
 

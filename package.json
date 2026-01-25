@@ -14,7 +14,7 @@
     "@make-software/csprclick-core-client": "^1.11.0",
     "@make-software/csprclick-ui": "^2.0.0-beta.6",
     "blakejs": "^1.2.1",
-    "casper-js-sdk": "^5.0.7",
+    "casper-js-sdk": "^5.0.9",
     "dotenv": "^17.2.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
