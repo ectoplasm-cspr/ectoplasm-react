@@ -68,16 +68,12 @@ export function StakeTab() {
         throw new Error('No wallet found');
       }
 
-      // Use a real Casper testnet validator
-      const validatorAddress = 'account-hash-1b9f322c07b06cd303c98bf109cd8c9a4a57354bafa6194503ecde33d07133a1';
-
       console.log('Creating stake deploy...');
       
       // Create the stake deploy
       const deploy = await createStakeDeploy({
         publicKey,
         amount: csprAmount,
-        validatorAddress,
       });
 
       console.log('Signing and sending deploy...');

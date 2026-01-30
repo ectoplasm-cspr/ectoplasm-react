@@ -151,7 +151,7 @@ const ODRA_TOKENS: Record<TokenSymbol, TokenConfig> = {
     packageHash:
       "hash-9dc4dc802730354161070e541b9860d427f9eae9330fe993728e717420d7f01f",
     symbol: "sCSPR",
-    decimals: 18,
+    decimals: 9,
     name: "Staked CSPR",
     icon: null,
   },
@@ -235,7 +235,7 @@ const NATIVE_TOKENS: Record<TokenSymbol, TokenConfig> = {
     packageHash:
       "hash-9dc4dc802730354161070e541b9860d427f9eae9330fe993728e717420d7f01f",
     symbol: "sCSPR",
-    decimals: 18,
+    decimals: 9,
     name: "Staked CSPR",
     icon: null,
   },

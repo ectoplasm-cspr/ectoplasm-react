@@ -15,7 +15,6 @@ import { CasperService } from './casper';
 export interface StakeParams {
   publicKey: string;
   amount: string; // Amount in CSPR (will be converted to motes)
-  validatorAddress: string;
 }
 
 export interface UnstakeParams {
@@ -32,7 +31,7 @@ export interface WithdrawParams {
  * Create a deploy to stake CSPR and receive sCSPR
  */
 export async function createStakeDeploy(params: StakeParams): Promise<DeployUtil.Deploy> {
-  const { publicKey, amount, validatorAddress } = params;
+  const { publicKey, amount } = params;
   
   // Get staking manager contract hash
   const stakingManagerHash = EctoplasmConfig.contracts.stakingManager;
@@ -44,12 +43,8 @@ export async function createStakeDeploy(params: StakeParams): Promise<DeployUtil
   const amountFloat = parseFloat(amount);
   const amountInMotes = Math.floor(amountFloat * 1_000_000_000);
   
-  // Strip account-hash- prefix from validator address
-  const validatorHashHex = validatorAddress.replace('account-hash-', '');
-  
   // Build runtime arguments
   const args = RuntimeArgs.fromMap({
-    validator: CLValueBuilder.key(CLValueBuilder.byteArray(hexToBytes(validatorHashHex))),
     cspr_amount: CLValueBuilder.u256(amountInMotes.toString()),
   });
 
@@ -84,13 +79,13 @@ export async function createUnstakeDeploy(params: UnstakeParams): Promise<Deploy
     throw new Error('Staking Manager contract not configured');
   }
 
-  // Convert sCSPR amount (18 decimals)
+  // Convert sCSPR amount (9 decimals)
   const amountFloat = parseFloat(amount);
-  const amountInSmallestUnit = Math.floor(amountFloat * 1e18);
+  const amountInSmallestUnit = Math.floor(amountFloat * 1e9);
   
   // Build runtime arguments
   const args = RuntimeArgs.fromMap({
-    scspr_amount: CLValueBuilder.u512(amountInSmallestUnit.toString()),
+    scspr_amount: CLValueBuilder.u256(amountInSmallestUnit.toString()),
   });
 
   // Create deploy
