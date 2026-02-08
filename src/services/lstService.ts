@@ -37,17 +37,11 @@ export interface WithdrawParams {
 }
 
 /**
- * Create a deploy to stake CSPR and receive sCSPR
+ * Create a deploy to stake CSPR using session code
  */
 export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
-  const { publicKey, amount, validatorAddress } = params;
+  const { publicKey, amount } = params;
   
-  // Get staking manager contract hash
-  const stakingManagerHash = EctoplasmConfig.contracts.stakingManager;
-  if (!stakingManagerHash) {
-    throw new Error('Staking Manager contract not configured');
-  }
-
   // Convert CSPR to motes (1 CSPR = 1,000,000,000 motes)
   const amountFloat = parseFloat(amount);
   const amountInMotes = BigInt(Math.floor(amountFloat * 1_000_000_000));
@@ -55,22 +49,21 @@ export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
   // Parse public key
   const pk = PublicKey.fromHex(publicKey);
   
-  // Build runtime arguments using v5 API
-  // The validator should be an AccountHash (strip account-hash- prefix)
-  const validatorHash = validatorAddress.replace('account-hash-', '');
+  // Build runtime arguments - just the amount
   const args = Args.fromMap({
-    validator: CLValue.newCLKey(Key.newKey(`account-hash-${validatorHash}`)),
-    cspr_amount: CLValue.newCLUInt256(amountInMotes.toString()),
+    amount: CLValue.newCLUInt512(amountInMotes.toString()),
   });
 
-  // Create deploy using v5 API
-  // NOTE: This is a demo contract that mints sCSPR without actual CSPR transfer
-  const session = new ExecutableDeployItem();
-  session.storedContractByHash = new StoredContractByHash(
-    ContractHash.newContract(stakingManagerHash.replace('hash-', '')),
-    'stake',
-    args
-  );
+  // Load the staking session WASM
+  const wasmUrl = '/staking-session.wasm';
+  const wasmResponse = await fetch(wasmUrl);
+  if (!wasmResponse.ok) {
+    throw new Error('Failed to load staking WASM. Make sure staking-session.wasm is in your public folder.');
+  }
+  const wasmBytes = new Uint8Array(await wasmResponse.arrayBuffer());
+  
+  // Create session from WASM using the correct SDK method
+  const session = ExecutableDeployItem.newModuleBytes(wasmBytes, args);
   
   // Standard gas payment
   const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR
