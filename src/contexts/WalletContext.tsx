@@ -80,7 +80,32 @@ export function WalletProvider({ children }: WalletProviderProps) {
               decimals: 9
           };
 
-          // 2. Token Balances
+          // 2. sCSPR Balance from account storage
+          try {
+              const scsprBalance = await dex.getAccountNamedKey(pk, 'user_scspr_balance');
+              if (scsprBalance) {
+                  newBalances['sCSPR'] = {
+                      raw: scsprBalance,
+                      formatted: formatTokenAmount(scsprBalance, 9),
+                      decimals: 9
+                  };
+              } else {
+                  newBalances['sCSPR'] = {
+                      raw: 0n,
+                      formatted: '0',
+                      decimals: 9
+                  };
+              }
+          } catch (e) {
+              console.error('[Wallet] Error fetching sCSPR balance from account storage', e);
+              newBalances['sCSPR'] = {
+                  raw: 0n,
+                  formatted: '0',
+                  decimals: 9
+              };
+          }
+
+          // 3. Other Token Balances
           let accountHashStr = '';
           try {
               if (pk.length === 64 || pk.startsWith('01') || pk.startsWith('02')) {
@@ -93,6 +118,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
           if (accountHashStr) {
               for (const [symbol, tokenInfo] of Object.entries(config.tokens)) {
+                  if (symbol === 'sCSPR') continue; // Skip sCSPR, we already fetched it
                   try {
                       const raw = await dex.getTokenBalance(tokenInfo.contractHash, accountHashStr);
                       const formatted = formatTokenAmount(raw, tokenInfo.decimals);

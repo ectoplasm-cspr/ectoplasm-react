@@ -16,9 +16,8 @@ export function UnstakeTab() {
   // Fetch sCSPR balance from wallet context
   useEffect(() => {
     if (publicKey && balances.sCSPR) {
-      // Convert from smallest unit to sCSPR (18 decimals)
-      const balanceInScspr = Number(balances.sCSPR.raw) / 1e18;
-      setScsprBalance(balanceInScspr.toString());
+      // Use the formatted balance directly (already converted from motes)
+      setScsprBalance(balances.sCSPR.formatted);
     } else {
       setScsprBalance('0');
     }

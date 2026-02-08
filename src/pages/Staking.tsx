@@ -1,37 +1,9 @@
 import { useEffect, useState } from 'react';
 import { StakingCard } from '../components/staking';
 import { useWallet } from '../contexts/WalletContext';
-import { fetchLSTStats, LSTStats } from '../services/lstStatsService';
 
 export function Staking() {
   const { balances } = useWallet();
-  const [stats, setStats] = useState<LSTStats>({
-    tvl: '2,450,000',
-    apy: '8.5',
-    exchangeRate: '1.042',
-    totalStaked: '2,350,000',
-    totalSupply: '2,350,000',
-    validators: '12'
-  });
-  const [loading, setLoading] = useState(true);
-
-  // Fetch LST stats from blockchain
-  useEffect(() => {
-    const loadStats = async () => {
-      try {
-        const data = await fetchLSTStats();
-        setStats(data);
-      } catch (error) {
-        console.error('Error loading LST stats:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadStats();
-    const interval = setInterval(loadStats, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
-  }, []);
 
   // Add staking-page class to body for page-specific styling
   useEffect(() => {
@@ -51,40 +23,27 @@ export function Staking() {
             <p className="subtitle">Stake CSPR and receive sCSPR tokens that earn rewards while staying liquid</p>
           </div>
 
-          {/* Stats Grid */}
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-icon">💰</div>
-              <div className="stat-content">
-                <div className="stat-label">Total Value Locked</div>
-                <div className="stat-value">{loading ? '...' : `${stats.tvl} CSPR`}</div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon">📈</div>
-              <div className="stat-content">
-                <div className="stat-label">Current APY</div>
-                <div className="stat-value">{loading ? '...' : `${stats.apy}%`}</div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon">🔄</div>
-              <div className="stat-content">
-                <div className="stat-label">Exchange Rate</div>
-                <div className="stat-value">{loading ? '...' : `1 sCSPR = ${stats.exchangeRate} CSPR`}</div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon">🎯</div>
-              <div className="stat-content">
-                <div className="stat-label">Active Validators</div>
-                <div className="stat-value">{loading ? '...' : stats.validators}</div>
-              </div>
-            </div>
-          </div>
+
 
           {/* Main Staking Card */}
           <StakingCard />
+
+          {/* Your Position (if connected) */}
+          {balances.CSPR && (
+            <div className="position-card">
+              <h3>💼 Your Position</h3>
+              <div className="position-grid">
+                <div className="position-item">
+                  <div className="position-label">CSPR Balance</div>
+                  <div className="position-value">{balances.CSPR.formatted} CSPR</div>
+                </div>
+                <div className="position-item">
+                  <div className="position-label">sCSPR Balance</div>
+                  <div className="position-value">{balances.sCSPR?.formatted || '0'} sCSPR</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Info Sections */}
           <div className="info-grid">
@@ -145,34 +104,7 @@ export function Staking() {
             </div>
           </div>
 
-          {/* Your Position (if connected) */}
-          {balances.CSPR && (
-            <div className="position-card">
-              <h3>Your Position</h3>
-              <div className="position-grid">
-                <div className="position-item">
-                  <div className="position-label">CSPR Balance</div>
-                  <div className="position-value">{balances.CSPR.formatted} CSPR</div>
-                </div>
-                <div className="position-item">
-                  <div className="position-label">sCSPR Balance</div>
-                  <div className="position-value">{balances.sCSPR?.formatted || '0'} sCSPR</div>
-                </div>
-                <div className="position-item">
-                  <div className="position-label">Staked Value</div>
-                  <div className="position-value">
-                    {balances.sCSPR ? 
-                      (parseFloat(balances.sCSPR.formatted) * parseFloat(stats.exchangeRate)).toFixed(4) 
-                      : '0'} CSPR
-                  </div>
-                </div>
-                <div className="position-item">
-                  <div className="position-label">Estimated APY</div>
-                  <div className="position-value">{stats.apy}%</div>
-                </div>
-              </div>
-            </div>
-          )}
+
         </div>
       </section>
     </main>

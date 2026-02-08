@@ -102,17 +102,20 @@ export function StakeTab() {
       // Clear the input
       setCsprAmount('');
       
-      // Refresh balances after a delay to allow transaction to process
-      setTimeout(() => {
-        console.log('Refreshing balances...');
-        refreshBalances();
-      }, 3000);
+      // Refresh balances immediately
+      refreshBalances();
       
-      // Refresh again after 30 seconds
-      setTimeout(() => {
-        console.log('Refreshing balances again...');
+      // Keep refreshing every 10 seconds for 2 minutes to catch the transaction
+      const refreshInterval = setInterval(() => {
+        console.log('Auto-refreshing balances after stake...');
         refreshBalances();
-      }, 30000);
+      }, 10000);
+      
+      // Stop auto-refresh after 2 minutes
+      setTimeout(() => {
+        clearInterval(refreshInterval);
+        console.log('Stopped auto-refresh');
+      }, 120000);
     } catch (error: any) {
       console.error('Staking failed:', error);
       setToast({

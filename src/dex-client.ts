@@ -421,6 +421,89 @@ export class DexClient {
     }
 
     /**
+     * Get a named key value from an account's storage
+     */
+    async getAccountNamedKey(publicKeyHex: string, keyName: string): Promise<bigint | null> {
+        try {
+            const publicKey = PublicKey.fromHex(publicKeyHex);
+            const accountHashKey = publicKey.accountHash().toPrefixedString();
+
+            const stateRootHash = await this.getStateRootHash();
+            const accountInfo = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: accountHashKey,
+                path: []
+            });
+            
+            const account = accountInfo?.stored_value?.Account;
+            if (!account || !account.named_keys) {
+                return null;
+            }
+
+            // Find the named key
+            const namedKey = account.named_keys.find((k: any) => k.name === keyName);
+            if (!namedKey) {
+                return null;
+            }
+
+            // Query the URef
+            const urefKey = namedKey.key;
+            const valueData = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: urefKey,
+                path: []
+            });
+
+            // Parse the CLValue
+            const clValue = valueData?.stored_value?.CLValue;
+            if (!clValue) {
+                return null;
+            }
+
+            // Parse U512 from bytes (hex string, little-endian with length prefix)
+            if (clValue.cl_type === 'U512') {
+                const bytes = clValue.bytes;
+                console.log('[getAccountNamedKey] Raw bytes:', bytes);
+                
+                if (!bytes || bytes.length === 0) {
+                    return 0n;
+                }
+                
+                // Remove '0x' prefix if present
+                let hexStr = bytes.startsWith('0x') ? bytes.slice(2) : bytes;
+                
+                // First byte is the length, skip it
+                hexStr = hexStr.substring(2);
+                console.log('[getAccountNamedKey] Hex string (without length):', hexStr);
+                
+                if (hexStr.length === 0) {
+                    return 0n;
+                }
+                
+                // Casper uses little-endian, so reverse the byte order
+                // Split into pairs, reverse the array, then parse
+                const byteArray: string[] = [];
+                for (let i = 0; i < hexStr.length; i += 2) {
+                    byteArray.push(hexStr.substring(i, i + 2));
+                }
+                
+                // Reverse to get big-endian
+                const bigEndianHex = byteArray.reverse().join('');
+                console.log('[getAccountNamedKey] Big-endian hex:', bigEndianHex);
+                
+                const value = BigInt('0x' + bigEndianHex);
+                console.log('[getAccountNameedKey] Parsed value:', value.toString());
+                return value;
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error fetching account named key:', error);
+            return null;
+        }
+    }
+
+    /**
      * Get token balance for an account
      */
     async getTokenBalance(tokenContractHash: string, accountHash: string): Promise<bigint> {

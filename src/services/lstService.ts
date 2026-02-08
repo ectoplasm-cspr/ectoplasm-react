@@ -49,8 +49,9 @@ export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
   // Parse public key
   const pk = PublicKey.fromHex(publicKey);
   
-  // Build runtime arguments - just the amount
+  // Build runtime arguments - action and amount
   const args = Args.fromMap({
+    action: CLValue.newCLString('stake'),
     amount: CLValue.newCLUInt512(amountInMotes.toString()),
   });
 
@@ -77,43 +78,44 @@ export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
 }
 
 /**
- * Create a deploy to unstake sCSPR and receive CSPR
+ * Create a deploy to unstake sCSPR and burn tokens
  */
-export async function createUnstakeDeploy(params: UnstakeParams): Promise<DeployUtil.Deploy> {
+export async function createUnstakeDeploy(params: UnstakeParams): Promise<Deploy> {
   const { publicKey, amount } = params;
   
-  // Get staking manager contract hash
-  const stakingManagerHash = EctoplasmConfig.contracts.stakingManager;
-  if (!stakingManagerHash) {
-    throw new Error('Staking Manager contract not configured');
-  }
-
-  // Convert sCSPR amount (18 decimals)
+  // Convert sCSPR to motes (1 sCSPR = 1,000,000,000 motes)
   const amountFloat = parseFloat(amount);
-  const amountInSmallestUnit = Math.floor(amountFloat * 1e18);
+  const amountInMotes = BigInt(Math.floor(amountFloat * 1_000_000_000));
   
-  // Build runtime arguments
-  const args = RuntimeArgs.fromMap({
-    scspr_amount: CLValueBuilder.u512(amountInSmallestUnit.toString()),
+  // Parse public key
+  const pk = PublicKey.fromHex(publicKey);
+  
+  // Build runtime arguments - action and amount
+  const args = Args.fromMap({
+    action: CLValue.newCLString('unstake'),
+    amount: CLValue.newCLUInt512(amountInMotes.toString()),
   });
 
-  // Create deploy
-  const deployParams = new DeployUtil.DeployParams(
-    CLPublicKey.fromHex(publicKey),
-    'casper-test',
-    1,
-    1800000
-  );
-
-  const payment = DeployUtil.standardPayment(3_000_000_000); // 3 CSPR payment
-
-  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(
-    hexToBytes(stakingManagerHash.replace('hash-', '')),
-    'unstake',
-    args
-  );
-
-  return DeployUtil.makeDeploy(deployParams, session, payment);
+  // Load the staking session WASM (same WASM handles both stake and unstake)
+  const wasmUrl = '/staking-session.wasm';
+  const wasmResponse = await fetch(wasmUrl);
+  if (!wasmResponse.ok) {
+    throw new Error('Failed to load staking WASM. Make sure staking-session.wasm is in your public folder.');
+  }
+  const wasmBytes = new Uint8Array(await wasmResponse.arrayBuffer());
+  
+  // Create session from WASM using the correct SDK method
+  const session = ExecutableDeployItem.newModuleBytes(wasmBytes, args);
+  
+  // Standard gas payment
+  const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR
+  
+  const header = DeployHeader.default();
+  header.account = pk;
+  header.chainName = 'casper-test';
+  header.gasPrice = 1;
+  
+  return Deploy.makeDeploy(header, payment, session);
 }
 
 /**
