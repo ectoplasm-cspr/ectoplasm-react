@@ -395,7 +395,7 @@ export class DexClient {
             // 1. Get Account Info to find Main Purse
             const stateRootHash = await this.getStateRootHash();
             const accountInfo = await this.rpcRequest('state_get_account_info', {
-                public_key: publicKey.toAccountHashStr(),
+                public_key: publicKeyHex,
                 state_root_hash: stateRootHash
             });
             const account = accountInfo.account || accountInfo;
