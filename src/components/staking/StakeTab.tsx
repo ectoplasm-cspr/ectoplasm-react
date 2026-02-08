@@ -202,8 +202,12 @@ export function StakeTab() {
 
       <button
         className="stake-button primary-button"
-        onClick={handleStake}
-        disabled={isStaking || !csprAmount || parseFloat(csprAmount) < 1}
+        onClick={() => {
+          console.log('BUTTON CLICKED - DIRECT HANDLER');
+          alert('Button clicked!');
+          handleStake();
+        }}
+        disabled={false}
       >
         {isStaking ? 'Staking...' : 'Stake CSPR'}
       </button>
