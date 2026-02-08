@@ -391,23 +391,26 @@ export class DexClient {
     async getCSPRBalance(publicKeyHex: string): Promise<bigint> {
         try {
             const publicKey = PublicKey.fromHex(publicKeyHex);
+            const accountHashKey = publicKey.accountHash().toPrefixedString();
 
-            // 1. Get Account Info to find Main Purse
+            // 1. Get Account Info to find Main Purse using state_get_item
             const stateRootHash = await this.getStateRootHash();
-            const accountInfo = await this.rpcRequest('state_get_account_info', {
-                public_key: publicKeyHex,
-                state_root_hash: stateRootHash
+            const accountInfo = await this.rpcRequest('state_get_item', {
+                state_root_hash: stateRootHash,
+                key: accountHashKey,
+                path: []
             });
-            const account = accountInfo.account || accountInfo;
+            
+            const account = accountInfo?.stored_value?.Account;
 
-            if (!account || !account.mainPurse) {
+            if (!account || !account.main_purse) {
                 return 0n;
             }
 
-            // 2. Query Balance using state_get_balance directly via rpcRequest
+            // 2. Query Balance using state_get_balance
             const balanceResult = await this.rpcRequest('state_get_balance', {
                 state_root_hash: stateRootHash,
-                purse_uref: account.mainPurse
+                purse_uref: account.main_purse
             });
 
             return BigInt(balanceResult.balance_value);
