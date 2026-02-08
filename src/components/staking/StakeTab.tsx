@@ -42,6 +42,10 @@ export function StakeTab() {
   }, [csprAmount, exchangeRate]);
 
   const handleStake = async () => {
+    console.log('=== STAKE BUTTON CLICKED ===');
+    console.log('Amount:', csprAmount);
+    console.log('Public Key:', publicKey);
+    
     if (!csprAmount || parseFloat(csprAmount) <= 0) {
       alert('Please enter a valid amount');
       return;
@@ -58,6 +62,7 @@ export function StakeTab() {
     }
 
     setIsStaking(true);
+    console.log('Starting stake process...');
     try {
       // Get wallet provider
       const w = window as any;

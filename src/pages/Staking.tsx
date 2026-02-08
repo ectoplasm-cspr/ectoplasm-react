@@ -1,16 +1,37 @@
 import { useEffect, useState } from 'react';
 import { StakingCard } from '../components/staking';
 import { useWallet } from '../contexts/WalletContext';
+import { fetchLSTStats, LSTStats } from '../services/lstStatsService';
 
 export function Staking() {
   const { balances } = useWallet();
-  const [stats] = useState({
+  const [stats, setStats] = useState<LSTStats>({
     tvl: '2,450,000',
     apy: '8.5',
     exchangeRate: '1.042',
     totalStaked: '2,350,000',
+    totalSupply: '2,350,000',
     validators: '12'
   });
+  const [loading, setLoading] = useState(true);
+
+  // Fetch LST stats from blockchain
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const data = await fetchLSTStats();
+        setStats(data);
+      } catch (error) {
+        console.error('Error loading LST stats:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadStats();
+    const interval = setInterval(loadStats, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   // Add staking-page class to body for page-specific styling
   useEffect(() => {
@@ -36,28 +57,28 @@ export function Staking() {
               <div className="stat-icon">💰</div>
               <div className="stat-content">
                 <div className="stat-label">Total Value Locked</div>
-                <div className="stat-value">{stats.tvl} CSPR</div>
+                <div className="stat-value">{loading ? '...' : `${stats.tvl} CSPR`}</div>
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-icon">📈</div>
               <div className="stat-content">
                 <div className="stat-label">Current APY</div>
-                <div className="stat-value">{stats.apy}%</div>
+                <div className="stat-value">{loading ? '...' : `${stats.apy}%`}</div>
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-icon">🔄</div>
               <div className="stat-content">
                 <div className="stat-label">Exchange Rate</div>
-                <div className="stat-value">1 sCSPR = {stats.exchangeRate} CSPR</div>
+                <div className="stat-value">{loading ? '...' : `1 sCSPR = ${stats.exchangeRate} CSPR`}</div>
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-icon">🎯</div>
               <div className="stat-content">
                 <div className="stat-label">Active Validators</div>
-                <div className="stat-value">{stats.validators}</div>
+                <div className="stat-value">{loading ? '...' : stats.validators}</div>
               </div>
             </div>
           </div>
