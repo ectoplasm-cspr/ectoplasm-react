@@ -66,8 +66,8 @@ export async function createStakeDeploy(params: StakeParams): Promise<Deploy> {
   // Create session from WASM using the correct SDK method
   const session = ExecutableDeployItem.newModuleBytes(wasmBytes, args);
   
-  // Standard gas payment
-  const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR
+  // Increased gas payment for CSPR transfer operations
+  const payment = ExecutableDeployItem.standardPayment('10000000000'); // 10 CSPR
   
   const header = DeployHeader.default();
   header.account = pk;
@@ -107,8 +107,8 @@ export async function createUnstakeDeploy(params: UnstakeParams): Promise<Deploy
   // Create session from WASM using the correct SDK method
   const session = ExecutableDeployItem.newModuleBytes(wasmBytes, args);
   
-  // Standard gas payment
-  const payment = ExecutableDeployItem.standardPayment('3000000000'); // 3 CSPR
+  // Increased gas payment for operations
+  const payment = ExecutableDeployItem.standardPayment('10000000000'); // 10 CSPR
   
   const header = DeployHeader.default();
   header.account = pk;
